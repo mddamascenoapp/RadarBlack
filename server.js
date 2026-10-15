@@ -3,7 +3,7 @@ const app = express();
 
 app.use(express.json());
 
-// Interface Visual com Logotipo SVG Idêntico à Imagem Conceito
+// Interface Limpa, Profissional e Intuitiva - RadarBlack
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -11,9 +11,8 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>RadarBlack — Inteligência e Auditoria de Preços</title>
+        <title>RadarBlack — Auditoria de Preços</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
         <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <style>
             :root {
@@ -21,7 +20,6 @@ app.get('/', (req, res) => {
                 --bg-card: #0f1626;
                 --border-color: #1e293b;
                 --accent-cyan: #38bdf8;
-                --accent-blue: #2563eb;
                 --text-main: #f8fafc;
                 --text-muted: #94a3b8;
             }
@@ -37,10 +35,9 @@ app.get('/', (req, res) => {
                 min-height: 100vh;
             }
             .container {
-                max-width: 880px;
+                max-width: 800px;
                 width: 100%;
             }
-            /* Logotipo Fiel à Imagem Conceito */
             .brand-header {
                 text-align: center;
                 margin-bottom: 35px;
@@ -53,29 +50,23 @@ app.get('/', (req, res) => {
                 gap: 12px;
             }
             .radar-logo-svg {
-                width: 110px;
-                height: 110px;
-                filter: drop-shadow(0px 0px 18px rgba(56, 189, 248, 0.4));
+                width: 100px;
+                height: 100px;
+                filter: drop-shadow(0px 0px 18px rgba(56, 189, 248, 0.35));
             }
             .logo-text-group {
-                font-size: 2.6rem;
+                font-size: 2.4rem;
                 font-weight: 800;
                 letter-spacing: -0.5px;
             }
-            .text-radar {
-                color: #ffffff;
-            }
-            .text-black {
-                color: #94a3b8;
-            }
+            .text-radar { color: #ffffff; }
+            .text-black { color: #94a3b8; }
             .brand-subtitle {
                 color: var(--text-muted);
                 font-size: 0.95rem;
                 font-weight: 500;
                 margin-top: 6px;
-                letter-spacing: 0.2px;
             }
-            /* Cards da Aplicação */
             .card {
                 background: var(--bg-card);
                 border: 1px solid var(--border-color);
@@ -84,17 +75,8 @@ app.get('/', (req, res) => {
                 box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.6);
                 margin-bottom: 30px;
             }
-            .form-grid {
-                display: grid;
-                grid-template-columns: 2fr 1fr;
-                gap: 20px;
-                margin-bottom: 20px;
-            }
-            @media(max-width: 768px) {
-                .form-grid { grid-template-columns: 1fr; }
-            }
             .form-group {
-                margin-bottom: 15px;
+                margin-bottom: 20px;
             }
             label {
                 display: block;
@@ -105,7 +87,7 @@ app.get('/', (req, res) => {
                 text-transform: uppercase;
                 letter-spacing: 0.8px;
             }
-            input, select {
+            input {
                 width: 100%;
                 padding: 14px 16px;
                 border-radius: 10px;
@@ -117,7 +99,7 @@ app.get('/', (req, res) => {
                 box-sizing: border-box;
                 transition: all 0.3s ease;
             }
-            input:focus, select:focus {
+            input:focus {
                 outline: none;
                 border-color: var(--accent-cyan);
                 box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
@@ -157,4 +139,221 @@ app.get('/', (req, res) => {
                 background: rgba(255,255,255,0.02);
                 border: 1px solid var(--border-color);
                 padding: 20px 24px;
-                border-
+                border-radius: 12px;
+                margin-bottom: 25px;
+            }
+            .smile-badge-lg {
+                font-size: 2.8rem;
+                background: #070a12;
+                width: 70px;
+                height: 70px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                border: 2px solid var(--border-color);
+                flex-shrink: 0;
+            }
+            .diagnosis-info h2 {
+                margin: 0 0 6px 0;
+                font-size: 1.35rem;
+                font-weight: 700;
+            }
+            .diagnosis-info p {
+                margin: 0;
+                color: var(--text-muted);
+                font-size: 0.92rem;
+                line-height: 1.4;
+            }
+            .chart-wrapper {
+                position: relative;
+                height: 340px;
+                width: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="brand-header">
+                <div class="logo-container">
+                    <svg class="radar-logo-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="45" cy="45" r="38" stroke="url(#cyan-grad)" stroke-width="2.5" opacity="0.4"/>
+                        <circle cx="45" cy="45" r="28" stroke="url(#cyan-grad)" stroke-width="3" opacity="0.6"/>
+                        <circle cx="45" cy="45" r="18" stroke="url(#cyan-grad)" stroke-width="3.5"/>
+                        <path d="M 45 17 A 28 28 0 0 1 73 45" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+                        <path d="M 45 27 A 18 18 0 0 1 63 45" stroke="#38bdf8" stroke-width="4.5" stroke-linecap="round"/>
+                        <path d="M41 39C41 39 45 37 45 37C45 37 49 39 49 39V44C49 48 45 51 45 51C45 51 41 48 41 44V39Z" fill="#38bdf8"/>
+                        <line x1="60" y1="60" x2="82" y2="82" stroke="url(#cyan-grad)" stroke-width="7" stroke-linecap="round"/>
+                        <line x1="60" y1="60" x2="82" y2="82" stroke="#070a12" stroke-width="2" stroke-linecap="round"/>
+                        <defs>
+                            <linearGradient id="cyan-grad" x1="0" y1="0" x2="100" y2="100">
+                                <stop offset="0%" stop-color="#38bdf8"/>
+                                <stop offset="100%" stop-color="#1d4ed8"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    <div class="logo-text-group">
+                        <span class="text-radar">Radar</span><span class="text-black">Black</span>
+                    </div>
+                </div>
+                <div class="brand-subtitle">Detecção Inteligente de Falsos Descontos</div>
+            </div>
+
+            <div class="card">
+                <div class="form-group">
+                    <label>Link do Produto na Loja</label>
+                    <input type="text" id="produtoLink" placeholder="Cole o link da Amazon, Magalu ou Mercado Livre...">
+                </div>
+
+                <div class="form-group">
+                    <label>Preço Atual Anunciado (R$)</label>
+                    <input type="number" id="precoAtual" step="0.01" placeholder="Ex: 4549.00">
+                </div>
+
+                <button class="btn-analyze" onclick="auditarPreco()">Verificar Transparência da Oferta</button>
+            </div>
+
+            <div id="resultadoContainer" class="card result-card">
+                <div class="diagnosis-box">
+                    <div id="smileIcon" class="smile-badge-lg">🟡</div>
+                    <div class="diagnosis-info">
+                        <h2 id="diagnosticoTitulo">Analisando...</h2>
+                        <p id="diagnosticoMsg"></p>
+                    </div>
+                </div>
+
+                <div class="chart-wrapper">
+                    <canvas id="graficoHistorico"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let meuGrafico = null;
+
+            function auditarPreco() {
+                const precoAtual = parseFloat(document.getElementById('precoAtual').value);
+                const link = document.getElementById('produtoLink').value;
+
+                if (!link || !precoAtual) {
+                    alert('Por favor, preencha o link e o preço atual do produto.');
+                    return;
+                }
+
+                // Simulação inteligente baseada no valor inserido para teste do algoritmo
+                // (No futuro, o robô buscará esses 3 valores reais direto do banco de dados)
+                let media150 = precoAtual * 1.10; // Média base estimada
+                let pico30 = precoAtual > 4000 ? precoAtual * 1.25 : precoAtual * 0.95;
+
+                fetch('/api/diagnostico', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ precoAtual, pico30Dias: pico30, media150Dias: media150 })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('resultadoContainer').style.display = 'block';
+                    document.getElementById('smileIcon').innerText = data.icone;
+                    document.getElementById('diagnosticoTitulo').innerText = data.diagnostico;
+                    document.getElementById('diagnosticoMsg').innerText = data.mensagem;
+
+                    renderizarGrafico(media150 * 0.95, media150, pico30, precoAtual);
+                });
+            }
+
+            function renderizarGrafico(h5m, h3m, pico, atual) {
+                const ctx = document.getElementById('graficoHistorico').getContext('2d');
+                if (meuGrafico) meuGrafico.destroy();
+
+                meuGrafico = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['Há 5 Meses', 'Há 3 Meses', 'Mês Passado (Pico)', 'Hoje (Black Friday)'],
+                        datasets: [{
+                            label: 'Evolução do Preço (R$)',
+                            data: [h5m, h3m, pico, atual],
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56, 189, 248, 0.08)',
+                            fill: true,
+                            tension: 0.35,
+                            borderWidth: 3.5,
+                            pointRadius: 6,
+                            pointBackgroundColor: '#070a12',
+                            pointBorderColor: '#38bdf8',
+                            pointBorderWidth: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return ' Preço: R$ ' + context.parsed.y.toLocaleString('pt-BR', {minimumFractionDigits: 2});
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: { 
+                                grid: { color: 'rgba(255,255,255,0.04)' },
+                                ticks: { 
+                                    color: '#94a3b8',
+                                    callback: function(value) { return 'R$ ' + value.toLocaleString('pt-BR'); }
+                                }
+                            },
+                            x: { 
+                                grid: { display: false },
+                                ticks: { color: '#94a3b8', font: { weight: '600' } }
+                            }
+                        }
+                    }
+                });
+            }
+        </script>
+    </body>
+    </html>
+    `);
+});
+
+app.post('/api/diagnostico', (req, res) => {
+    const { precoAtual, pico30Dias, media150Dias } = req.body;
+
+    const houveInflacaoRecente = pico30Dias >= (media150Dias * 1.15);
+    const precoVoltouAoNormal = precoAtual >= (media150Dias * 0.90);
+
+    if (houveInflacaoRecente && precoVoltouAoNormal) {
+        return res.json({
+            statusSmile: "TRISTE",
+            icone: "🔴",
+            diagnostico: "Alerta de Desconto Fake!",
+            mensagem: "Detectamos manipulação: o preço foi elevado artificialmente nas últimas semanas para forçar um falso apelo de grande desconto hoje."
+        });
+    }
+
+    const precoBemAbaixo = precoAtual <= (media150Dias * 0.88);
+    const semPicoAnormal = pico30Dias <= (media150Dias * 1.08);
+
+    if (precoBemAbaixo && semPicoAnormal) {
+        return res.json({
+            statusSmile: "FELIZ",
+            icone: "🟢",
+            diagnostico: "Oferta Real e Legítima!",
+            mensagem: "Auditoria aprovada: este é o menor patamar de preço dos últimos 5 meses. Excelente oportunidade de compra."
+        });
+    }
+
+    return res.json({
+        statusSmile: "NEUTRO",
+        icone: "🟡",
+        diagnostico: "Preço Estável na Média",
+        mensagem: "O valor praticado hoje está alinhado com o histórico médio de mercado, sem desvios significativos."
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`RadarBlack rodando na porta ${PORT}`);
+});
