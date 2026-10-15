@@ -1,11 +1,34 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
+const { Pool } = require('pg');
 const app = express();
 
 app.use(express.json());
 
-// Interface Principal - RadarBlack Pro
+// Configuração do Banco de Dados PostgreSQL (Render / Produção ou Local)
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
+
+// Criar tabela de histórico automaticamente ao iniciar o servidor
+async function inicializarBanco() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS historico_precos (
+                id SERIAL PRIMARY KEY,
+                url TEXT NOT NULL,
+                preco NUMERIC(10,2) NOT NULL,
+                data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log("Banco de dados conectado e tabela 'historico_precos' pronta!");
+    } catch (err) {
+        console.error("Erro ao inicializar o banco de dados:", err);
+    }
+}
+inicializarBanco();
+
+// Interface Principal - RadarBlack Pro (Com Dados Reais do Banco)
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -205,7 +228,7 @@ app.get('/', (req, res) => {
                         <span class="text-radar">Radar</span><span class="text-black">Black</span>
                     </div>
                 </div>
-                <div class="brand-subtitle">Auditoria Inteligente e Varredura de Preços</div>
+                <div class="brand-subtitle">Monitoramento e Auditoria Baseada em Histórico Real</div>
             </div>
 
             <div class="card">
@@ -215,12 +238,12 @@ app.get('/', (req, res) => {
                 </div>
 
                 <div class="form-group">
-                    <label>Preço Atual Encontrado na Loja (R$)</label>
-                    <input type="number" id="precoManual" step="0.01" placeholder="Ex: 3499.00 (Caso o site bloqueie a leitura automática)">
+                    <label>Preço Atual Verificado na Loja (R$)</label>
+                    <input type="number" id="precoAtualInput" step="0.01" placeholder="Ex: 3499.00">
                 </div>
 
-                <button class="btn-analyze" onclick="executarAuditoria()">Varrer e Auditar Oferta</button>
-                <div id="loadingText" class="loading">🛰️ O Radar está processando os dados da oferta...</div>
+                <button class="btn-analyze" onclick="registrarEAuditar()">Registrar Preço e Auditar</button>
+                <div id="loadingText" class="loading">💾 Salvando registro no banco de dados e auditando histórico...</div>
             </div>
 
             <div id="resultadoContainer" class="card result-card">
@@ -241,12 +264,12 @@ app.get('/', (req, res) => {
         <script>
             let meuGrafico = null;
 
-            async function executarAuditoria() {
-                const link = document.getElementById('produtoLink').value;
-                const precoManual = parseFloat(document.getElementById('precoManual').value);
+            async function registrarEAuditar() {
+                const url = document.getElementById('produtoLink').value;
+                const preco = parseFloat(document.getElementById('precoAtualInput').value);
 
-                if (!link) {
-                    alert('Por favor, cole o link do produto.');
+                if (!url || isNaN(preco)) {
+                    alert('Por favor, informe o link e o preço atual do produto.');
                     return;
                 }
 
@@ -254,10 +277,10 @@ app.get('/', (req, res) => {
                 document.getElementById('resultadoContainer').style.display = 'none';
 
                 try {
-                    const response = await fetch('/api/auditar', {
+                    const response = await fetch('/api/auditar-db', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: link, precoManual })
+                        body: JSON.stringify({ url, preco })
                     });
                     const data = await response.json();
 
@@ -270,10 +293,10 @@ app.get('/', (req, res) => {
 
                     document.getElementById('resultadoContainer').style.display = 'block';
                     document.getElementById('smileIcon').innerText = data.icone;
-                    document.getElementById('diagnosticoTitulo').innerText = data.diagnostico + ' (Preço Auditado: R$ ' + data.precoAtual.toLocaleString('pt-BR', {minimumFractionDigits: 2}) + ')';
+                    document.getElementById('diagnosticoTitulo').innerText = data.diagnostico;
                     document.getElementById('diagnosticoMsg').innerText = data.mensagem;
 
-                    renderizarGrafico(data.historico.h5m, data.historico.h3m, data.historico.pico, data.precoAtual);
+                    renderizarGrafico(data.historicoLabels, data.historicoValores);
 
                 } catch (err) {
                     document.getElementById('loadingText').style.display = 'none';
@@ -281,17 +304,17 @@ app.get('/', (req, res) => {
                 }
             }
 
-            function renderizarGrafico(h5m, h3m, pico, atual) {
+            function renderizarGrafico(labels, valores) {
                 const ctx = document.getElementById('graficoHistorico').getContext('2d');
                 if (meuGrafico) meuGrafico.destroy();
 
                 meuGrafico = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: ['Há 5 Meses', 'Há 3 Meses', 'Mês Passado', 'Hoje (Black Friday)'],
+                        labels: labels,
                         datasets: [{
-                            label: 'Evolução do Preço (R$)',
-                            data: [h5m, h3m, pico, atual],
+                            label: 'Histórico Registrado (R$)',
+                            data: valores,
                             borderColor: '#38bdf8',
                             backgroundColor: 'rgba(56, 189, 248, 0.08)',
                             fill: true,
@@ -338,73 +361,68 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Endpoint de Auditoria
-app.post('/api/auditar', async (req, res) => {
-    const { url, precoManual } = req.body;
+// Endpoint de Auditoria e Persistência no PostgreSQL
+app.post('/api/auditar-db', async (req, res) => {
+    const { url, preco } = req.body;
 
-    if (!url) {
-        return res.status(400).json({ erro: "URL inválida." });
+    if (!url || isNaN(preco)) {
+        return res.status(400).json({ erro: "Dados incompletos para auditoria." });
     }
 
-    let precoDetectado = precoManual;
+    try {
+        // 1. Salva o preço atual no banco de dados com a data/hora do momento
+        await pool.query(
+            'INSERT INTO historico_precos (url, preco) VALUES ($1, $2)',
+            [url, preco]
+        );
 
-    // Se o usuário não preencheu o preço manual, o robô tenta extrair da página
-    if (!precoDetectado || isNaN(precoDetectado)) {
-        try {
-            const response = await axios.get(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Accept-Language': 'pt-BR,pt;q=0.9'
-                },
-                timeout: 8000
-            });
+        // 2. Busca todo o histórico real armazenado para esta URL específica
+        const resultado = await pool.query(
+            'SELECT preco, TO_CHAR(data_registro, \'DD/MM HH24:MI\') as data_formatada FROM historico_precos WHERE url = $1 ORDER BY data_registro ASC',
+            [url]
+        );
 
-            const $ = cheerio.load(response.data);
-            const seletores = ['.price-tag-fraction', '.andes-money-amount__fraction', '.a-price-whole', '#price_inside_buybox', '[data-testid="price-value"]'];
+        const registros = resultado.rows;
+        let historicoLabels = [];
+        let historicoValores = [];
 
-            for (let sel of seletores) {
-                const val = $(sel).first().text().trim();
-                if (val) {
-                    const limpo = val.replace(/[^\d,]/g, '').replace(',', '.');
-                    const num = parseFloat(limpo);
-                    if (!isNaN(num) && num > 50) {
-                        precoDetectado = num;
-                        break;
-                    }
-                }
+        registros.forEach(r => {
+            historicoLabels.push(r.data_formatada);
+            historicoValores.push(parseFloat(r.preco));
+        });
+
+        // 3. Lógica de Auditoria Baseada no Histórico Real Gravado
+        let icone = "🟡";
+        let diagnostico = "Preço Registrado / Base Estável";
+        let mensagem = "Este foi o primeiro registro ou o preço mantém-se estável em relação às coletas anteriores em nosso banco de dados.";
+
+        if (registros.length >= 2) {
+            const primeiroPreco = historicoValores[0];
+            const precoAtualRegistrado = historicoValores[historicoValores.length - 1];
+
+            if (precoAtualRegistrado < primeiroPreco * 0.90) {
+                icone = "🟢";
+                diagnostico = "Oferta Real e Comprovada!";
+                mensagem = `Auditoria aprovada: O preço caiu de R$ ${primeiroPreco.toFixed(2)} para R$ ${precoAtualRegistrado.toFixed(2)} com base em nosso histórico real monitorado.`;
+            } else if (precoAtualRegistrado > primeiroPreco * 1.15) {
+                icone = "🔴";
+                diagnostico = "Alerta de Variação / Possível Alta Artificial!";
+                mensagem = `Atenção: O preço atual (R$ ${precoAtualRegistrado.toFixed(2)}) está acima do primeiro registro guardado em nossa base (R$ ${primeiroPreco.toFixed(2)}).`;
             }
-        } catch (error) {
-            console.log("Bloqueio anti-bot detectado na requisição.");
         }
+
+        return res.json({
+            icone,
+            diagnostico,
+            mensagem,
+            historicoLabels,
+            historicoValores
+        });
+
+    } catch (err) {
+        console.error("Erro na auditoria com banco de dados:", err);
+        return res.status(500).json({ erro: "Erro interno ao processar banco de dados." });
     }
-
-    // Fallback caso nem o scraping automático nem o manual tenham sido informados corretamente
-    if (!precoDetectado || isNaN(precoDetectado)) {
-        precoDetectado = 3499.00;
-    }
-
-    // Motor de Análise com base no preço informado
-    let h5m = precoDetectado * 1.12;
-    let h3m = precoDetectado * 1.06;
-    let pico = precoDetectado * 1.25;
-
-    let icone = "🟢";
-    let diagnostico = "Oferta Real e Legítima!";
-    let mensagem = "Auditoria concluída: O preço atual está abaixo da média histórica dos últimos meses. Excelente oportunidade de compra.";
-
-    if (precoDetectado >= 4000) {
-        icone = "🔴";
-        diagnostico = "Alerta de Desconto Fake!";
-        mensagem = "Auditoria concluída: Identificamos elevação artificial de preço nas semanas anteriores para mascarar a oferta atual.";
-    }
-
-    return res.json({
-        precoAtual: precoDetectado,
-        icone,
-        diagnostico,
-        mensagem,
-        historico: { h5m, h3m, pico }
-    });
 });
 
 const PORT = process.env.PORT || 3000;
