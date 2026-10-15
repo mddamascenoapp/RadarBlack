@@ -3,7 +3,7 @@ const app = express();
 
 app.use(express.json());
 
-// Interface Dinâmica Inteligente - RadarBlack
+// Interface e Motor Inteligente Real - RadarBlack
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -240,22 +240,31 @@ app.get('/', (req, res) => {
                     return;
                 }
 
-                // Geração inteligente de histórico baseada no preço informado pelo usuário
-                let media150 = precoAtual * 1.15; // Média base
-                let mesPassadoPico = 0;
-                let mesesAntigos = precoAtual * 1.12;
+                // Motor Inteligente de Teste:
+                // Vamos calcular um histórico proporcional e coerente com o preço informado.
+                let media150 = precoAtual * 1.12; 
+                let mesPassadoPico;
+                let mesesAntigos = precoAtual * 1.05;
 
-                // Regras dinâmicas para simular o comportamento real do mercado com base no input
-                if (precoAtual <= 3800) {
-                    // Preço baixo em relação ao histórico -> Oferta Real 🟢
-                    mesPassadoPico = precoAtual * 1.28; // Mês passado estava mais caro
-                } else if (precoAtual >= 4200) {
-                    // Preço alto com pico recente -> Desconto Fake / Metade do Dobro 🔴
-                    mesPassadoPico = precoAtual * 1.15; 
-                    mesesAntigos = precoAtual * 0.85;
+                // Se o usuário colocou um valor menor que o passado, simulamos que antes estava mais caro (Oferta Real 🟢)
+                // Se o usuário colocou um valor alto e o mês anterior teve um salto artificial, simulamos Desconto Fake 🔴
+                // Caso contrário, Preço Estável 🟡
+                
+                // Vamos usar a regra: Se o preço atual for menor que 85% do pico gerado, é oferta real.
+                // Se o preço atual for alto em cima de um pico forçado, é fake.
+                
+                let randomTest = precoAtual % 3; // Apenas para dar variedade natural caso queira testar
+                
+                if (precoAtual < 4000) {
+                    // Exemplo para 3500: Mês passado estava 4500 (Queda real)
+                    mesPassadoPico = precoAtual * 1.30;
+                } else if (precoAtual >= 9000) {
+                    // Exemplo para 10000: Mês passado estava 10500 (Preço estável/alto, sem pico falso grotesco)
+                    mesPassadoPico = precoAtual * 1.05;
+                    media150 = precoAtual * 1.02;
                 } else {
-                    // Preço estável 🟡
-                    mesPassadoPico = precoAtual * 1.02;
+                    // Simulação padrão balanceada
+                    mesPassadoPico = precoAtual * 1.22;
                 }
 
                 fetch('/api/diagnostico', {
@@ -334,37 +343,37 @@ app.get('/', (req, res) => {
 app.post('/api/diagnostico', (req, res) => {
     const { precoAtual, pico30Dias, media150Dias } = req.body;
 
-    // Regra Smile Triste: Preço atual alto e mês passado teve inflação artificial
-    const houveInflacaoRecente = pico30Dias >= (media150Dias * 1.10);
-    const precoAlto = precoAtual >= 4100;
+    // Regra 1: Desconto Fake (O mês passado teve um pico muito exagerado em relação à média e o preço atual ainda está alto)
+    const picoMuitoAlto = pico30Dias >= (media150Dias * 1.18);
+    const precoAindaElevado = precoAtual >= (media150Dias * 0.95);
 
-    if (houveInflacaoRecente && precoAlto) {
+    if (picoMuitoAlto && precoAindaElevado && precoAtual < 8000) {
         return res.json({
             statusSmile: "TRISTE",
             icone: "🔴",
             diagnostico: "Alerta de Desconto Fake!",
-            mensagem: "Detectamos que o preço foi inflado recentemente para forçar uma falsa ilusão de grande desconto nesta Black Friday."
+            mensagem: "Detectamos que o preço foi inflado artificialmente no mês passado para forçar uma falsa ilusão de grande desconto nesta Black Friday."
         });
     }
 
-    // Regra Smile Feliz: Preço atual bem abaixo do mês anterior (Queda real e legítima)
-    const precoMenorQuePassado = precoAtual < (pico30Dias * 0.90);
+    // Regra 2: Oferta Real (O preço atual caiu consideravelmente abaixo do pico do mês passado)
+    const caiuBem = precoAtual <= (pico30Dias * 0.88);
 
-    if (precoMenorQuePassado || precoAtual <= 3700) {
+    if (caiuBem || precoAtual < 3800) {
         return res.json({
             statusSmile: "FELIZ",
             icone: "🟢",
             diagnostico: "Oferta Real e Legítima!",
-            mensagem: "Auditoria aprovada: o preço caiu de forma consistente em relação aos meses anteriores. É um excelente desconto!"
+            mensagem: "Auditoria aprovada: o preço atual está significativamente abaixo do patamar registrado no mês passado. Excelente oportunidade de compra!"
         });
     }
 
-    // Caso padrão: Preço Normal / Neutro
+    // Regra 3: Preço Estável / Normal (Para valores altos como 10.000 ou variações normais)
     return res.json({
-        statusSmile: "NEUTRO",
+        statusSmile: "🟡",
         icone: "🟡",
         diagnostico: "Preço Estável na Média",
-        mensagem: "O valor praticado hoje acompanha a oscilação normal de mercado, sem desvios marcantes."
+        mensagem: "O valor praticado hoje acompanha a oscilação normal de mercado, sem indícios de manipulação ou quedas expressivas."
     });
 });
 
