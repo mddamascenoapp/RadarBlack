@@ -1,12 +1,14 @@
 {
   "name": "radarblack",
   "version": "1.0.0",
-  "description": "Comparador de precos e detector de desconto fake",
+  "description": "RadarBlack Anti-Fraud Price Monitor",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12"
   }
 }
