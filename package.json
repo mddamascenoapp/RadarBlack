@@ -1,7 +1,6 @@
 {
   "name": "radarblack",
   "version": "1.0.0",
-  "description": "RadarBlack Anti-Fraud Price Monitor",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
