@@ -3,7 +3,7 @@ const app = express();
 
 app.use(express.json());
 
-// Interface e Motor Inteligente Real - RadarBlack
+// Interface e Motor de Teste Dinâmico - RadarBlack
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -170,6 +170,12 @@ app.get('/', (req, res) => {
                 height: 340px;
                 width: 100%;
             }
+            .test-tips {
+                margin-top: 15px;
+                font-size: 0.82rem;
+                color: #64748b;
+                text-align: center;
+            }
         </style>
     </head>
     <body>
@@ -202,15 +208,16 @@ app.get('/', (req, res) => {
             <div class="card">
                 <div class="form-group">
                     <label>Link do Produto na Loja</label>
-                    <input type="text" id="produtoLink" placeholder="Cole o link da Amazon, Magalu ou Mercado Livre...">
+                    <input type="text" id="produtoLink" placeholder="Cole o link do produto...">
                 </div>
 
                 <div class="form-group">
                     <label>Preço Atual Anunciado (R$)</label>
-                    <input type="number" id="precoAtual" step="0.01" placeholder="Ex: 3500.00">
+                    <input type="number" id="precoAtual" step="0.01" placeholder="Ex: 4500.00">
                 </div>
 
                 <button class="btn-analyze" onclick="auditarPreco()">Verificar Transparência da Oferta</button>
+                <div class="test-tips">💡 Dica de teste: Digite <b>3000</b> (Verde), <b>5000</b> (Vermelho/Fake) ou <b>8000</b> (Amarelo/Estável).</div>
             </div>
 
             <div id="resultadoContainer" class="card result-card">
@@ -240,31 +247,22 @@ app.get('/', (req, res) => {
                     return;
                 }
 
-                // Motor Inteligente de Teste:
-                // Vamos calcular um histórico proporcional e coerente com o preço informado.
-                let media150 = precoAtual * 1.12; 
+                let media150 = precoAtual * 1.1;
                 let mesPassadoPico;
-                let mesesAntigos = precoAtual * 1.05;
+                let mesesAntigos = precoAtual * 1.02;
 
-                // Se o usuário colocou um valor menor que o passado, simulamos que antes estava mais caro (Oferta Real 🟢)
-                // Se o usuário colocou um valor alto e o mês anterior teve um salto artificial, simulamos Desconto Fake 🔴
-                // Caso contrário, Preço Estável 🟡
-                
-                // Vamos usar a regra: Se o preço atual for menor que 85% do pico gerado, é oferta real.
-                // Se o preço atual for alto em cima de um pico forçado, é fake.
-                
-                let randomTest = precoAtual % 3; // Apenas para dar variedade natural caso queira testar
-                
-                if (precoAtual < 4000) {
-                    // Exemplo para 3500: Mês passado estava 4500 (Queda real)
+                // Regras limpas para controle total dos testes pelo valor digitado:
+                if (precoAtual <= 3800) {
+                    // Valor baixo -> Oferta Real 🟢
+                    mesPassadoPico = precoAtual * 1.35; 
+                } else if (precoAtual >= 4200 && precoAtual <= 6500) {
+                    // Valor intermediário alto -> Simula Desconto Fake (Pico inflado) 🔴
                     mesPassadoPico = precoAtual * 1.30;
-                } else if (precoAtual >= 9000) {
-                    // Exemplo para 10000: Mês passado estava 10500 (Preço estável/alto, sem pico falso grotesco)
-                    mesPassadoPico = precoAtual * 1.05;
-                    media150 = precoAtual * 1.02;
+                    mesesAntigos = precoAtual * 0.90;
                 } else {
-                    // Simulação padrão balanceada
-                    mesPassadoPico = precoAtual * 1.22;
+                    // Valor muito alto -> Preço Estável 🟡
+                    mesPassadoPico = precoAtual * 1.02;
+                    media150 = precoAtual;
                 }
 
                 fetch('/api/diagnostico', {
@@ -341,13 +339,10 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/diagnostico', (req, res) => {
-    const { precoAtual, pico30Dias, media150Dias } = req.body;
+    const { precoAtual } = req.body;
 
-    // Regra 1: Desconto Fake (O mês passado teve um pico muito exagerado em relação à média e o preço atual ainda está alto)
-    const picoMuitoAlto = pico30Dias >= (media150Dias * 1.18);
-    const precoAindaElevado = precoAtual >= (media150Dias * 0.95);
-
-    if (picoMuitoAlto && precoAindaElevado && precoAtual < 8000) {
+    // Gatilho direto baseado na faixa de teste para facilitar sua validação
+    if (precoAtual >= 4200 && precoAtual <= 6500) {
         return res.json({
             statusSmile: "TRISTE",
             icone: "🔴",
@@ -356,10 +351,7 @@ app.post('/api/diagnostico', (req, res) => {
         });
     }
 
-    // Regra 2: Oferta Real (O preço atual caiu consideravelmente abaixo do pico do mês passado)
-    const caiuBem = precoAtual <= (pico30Dias * 0.88);
-
-    if (caiuBem || precoAtual < 3800) {
+    if (precoAtual <= 3800) {
         return res.json({
             statusSmile: "FELIZ",
             icone: "🟢",
@@ -368,9 +360,8 @@ app.post('/api/diagnostico', (req, res) => {
         });
     }
 
-    // Regra 3: Preço Estável / Normal (Para valores altos como 10.000 ou variações normais)
     return res.json({
-        statusSmile: "🟡",
+        statusSmile: "NEUTRO",
         icone: "🟡",
         diagnostico: "Preço Estável na Média",
         mensagem: "O valor praticado hoje acompanha a oscilação normal de mercado, sem indícios de manipulação ou quedas expressivas."
