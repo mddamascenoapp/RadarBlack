@@ -3,7 +3,7 @@ const app = express();
 
 app.use(express.json());
 
-// Interface Visual Profissional - RadarBlack (Versão Pro / Confiança)
+// Interface Visual com Logo de Lupa Confiante e RadarBlack Pro
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -11,14 +11,13 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>RadarBlack — Inteligência Anti-Fraude em Preços</title>
+        <title>RadarBlack — Auditoria e Inteligência de Preços</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
         <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <style>
             :root {
-                --bg-deep: #090d16;
-                --bg-card: #131b2e;
+                --bg-deep: #070a12;
+                --bg-card: #101726;
                 --border-color: #1e293b;
                 --accent-blue: #38bdf8;
                 --accent-green: #10b981;
@@ -42,7 +41,7 @@ app.get('/', (req, res) => {
                 max-width: 900px;
                 width: 100%;
             }
-            /* Logotipo Marcante e Profissional */
+            /* Logotipo com Lupa Confiante */
             .brand-header {
                 text-align: center;
                 margin-bottom: 40px;
@@ -50,26 +49,28 @@ app.get('/', (req, res) => {
             .logo-box {
                 display: inline-flex;
                 align-items: center;
-                gap: 12px;
-                background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(16, 185, 129, 0.05));
-                padding: 12px 24px;
-                border-radius: 50px;
-                border: 1px solid rgba(56, 189, 248, 0.2);
-                box-shadow: 0 0 30px rgba(56, 189, 248, 0.08);
+                gap: 14px;
+                background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(16, 185, 129, 0.04));
+                padding: 14px 28px;
+                border-radius: 60px;
+                border: 1px solid rgba(56, 189, 248, 0.25);
+                box-shadow: 0 0 35px rgba(56, 189, 248, 0.1);
                 margin-bottom: 15px;
             }
             .logo-icon {
-                font-size: 1.8rem;
-                background: #1e293b;
-                padding: 8px;
+                font-size: 1.7rem;
+                background: #192237;
+                width: 48px;
+                height: 48px;
                 border-radius: 50%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                box-shadow: inset 0 2px 5px rgba(0,0,0,0.6);
             }
             .logo-text {
-                font-size: 2rem;
+                font-size: 2.1rem;
                 font-weight: 800;
                 letter-spacing: -0.5px;
                 background: linear-gradient(90deg, #38bdf8, #818cf8);
@@ -78,7 +79,7 @@ app.get('/', (req, res) => {
             }
             .brand-subtitle {
                 color: var(--text-muted);
-                font-size: 1rem;
+                font-size: 1.05rem;
                 font-weight: 500;
             }
             /* Card de Consulta */
@@ -87,7 +88,7 @@ app.get('/', (req, res) => {
                 border: 1px solid var(--border-color);
                 border-radius: 16px;
                 padding: 30px;
-                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+                box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.5);
                 margin-bottom: 30px;
             }
             .form-grid {
@@ -116,7 +117,7 @@ app.get('/', (req, res) => {
                 padding: 14px 16px;
                 border-radius: 10px;
                 border: 1px solid var(--border-color);
-                background: #090d16;
+                background: #070a12;
                 color: white;
                 font-size: 1rem;
                 font-family: inherit;
@@ -132,7 +133,7 @@ app.get('/', (req, res) => {
                 width: 100%;
                 padding: 16px;
                 background: linear-gradient(135deg, #38bdf8, #0284c7);
-                color: #090d16;
+                color: #070a12;
                 font-weight: 800;
                 border: none;
                 border-radius: 10px;
@@ -141,12 +142,12 @@ app.get('/', (req, res) => {
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
                 transition: all 0.2s ease;
-                box-shadow: 0 4px 14px rgba(56, 189, 248, 0.3);
+                box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
             }
             .btn-analyze:hover {
                 opacity: 0.95;
                 transform: translateY(-1px);
-                box-shadow: 0 6px 20px rgba(56, 189, 248, 0.4);
+                box-shadow: 0 6px 22px rgba(56, 189, 248, 0.45);
             }
             /* Resultado do Diagnóstico */
             .result-card {
@@ -169,7 +170,7 @@ app.get('/', (req, res) => {
             }
             .smile-badge-lg {
                 font-size: 3rem;
-                background: #090d16;
+                background: #070a12;
                 width: 75px;
                 height: 75px;
                 display: flex;
@@ -201,35 +202,35 @@ app.get('/', (req, res) => {
         <div class="container">
             <div class="brand-header">
                 <div class="logo-box">
-                    <div class="logo-icon">🛡️</div>
+                    <div class="logo-icon">🔎</div>
                     <div class="logo-text">RadarBlack</div>
                 </div>
-                <div class="brand-subtitle">Auditoria Inteligente e Detecção de Falsos Descontos na Black Friday</div>
+                <div class="brand-subtitle">Inteligência investigativa de preços e detecção de falsos descontos</div>
             </div>
 
             <div class="card">
                 <div class="form-group">
                     <label>Link do Produto (Amazon, Magalu, Mercado Livre, etc.)</label>
-                    <input type="text" id="produtoLink" placeholder="Cole a URL do produto aqui para auditar...">
+                    <input type="text" id="produtoLink" placeholder="Cole a URL do produto para rastreamento...">
                 </div>
 
                 <div class="form-grid">
                     <div class="form-group" style="margin-bottom:0;">
-                        <label>Preço Atual da Oferta (R$)</label>
+                        <label>Preço Promocional Hoje (R$)</label>
                         <input type="number" id="precoAtual" step="0.01" value="2999.00">
                     </div>
                     <div class="form-group" style="margin-bottom:0;">
-                        <label>Simular Cenário Histórico</label>
+                        <label>Simular Comportamento Histórico</label>
                         <select id="cenarioSimulacao">
-                            <option value="fake">🔴 Metade do Dobro (Inflado Recente)</option>
+                            <option value="fake">🔴 Metade do Dobro (Aumento Recente)</option>
                             <option value="real">🟢 Desconto Legítimo Real</option>
-                            <option value="normal">🟡 Preço Estável / Normal</option>
+                            <option value="normal">🟡 Preço Estável / Sem Desvio</option>
                         </select>
                     </div>
                 </div>
 
                 <div style="margin-top: 20px;">
-                    <button class="btn-analyze" onclick="auditarPreco()">Executar Auditoria de Preço</button>
+                    <button class="btn-analyze" onclick="auditarPreco()">Executar Auditoria Investigativa</button>
                 </div>
             </div>
 
@@ -237,8 +238,8 @@ app.get('/', (req, res) => {
                 <div class="diagnosis-box">
                     <div id="smileIcon" class="smile-badge-lg">🟡</div>
                     <div class="diagnosis-info">
-                        <h2 id="diagnosticoTitulo">Aguardando auditoria...</h2>
-                        <p id="diagnosticoMsg">Insira os dados acima para rodar a varredura nos servidores de histórico.</p>
+                        <h2 id="diagnosticoTitulo">Aguardando varredura...</h2>
+                        <p id="diagnosticoMsg">Insira os parâmetros acima para disparar os algoritmos de verificação.</p>
                     </div>
                 </div>
 
@@ -259,13 +260,12 @@ app.get('/', (req, res) => {
                 let picoRecente = 3200.00;
 
                 if (cenario === 'fake') {
-                    picoRecente = baseMedia * 1.35; // Pico artificial de +35% no último mês
+                    picoRecente = baseMedia * 1.35;
                 } else if (cenario === 'real') {
                     picoRecente = baseMedia;
-                    baseMedia = baseMedia * 1.25; // O preço base antigo era maior, hoje tá bem abaixo
+                    baseMedia = baseMedia * 1.25;
                 }
 
-                // Envia para o backend processar as regras matemáticas do Smile
                 fetch('/api/diagnostico', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -299,7 +299,7 @@ app.get('/', (req, res) => {
                             tension: 0.35,
                             borderWidth: 3.5,
                             pointRadius: 6,
-                            pointBackgroundColor: '#090d16',
+                            pointBackgroundColor: '#070a12',
                             pointBorderColor: '#38bdf8',
                             pointBorderWidth: 3
                         }]
@@ -339,7 +339,6 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Motor Oficial Smile de Diagnóstico Anti-Fraude
 app.post('/api/diagnostico', (req, res) => {
     const { precoAtual, pico30Dias, media150Dias } = req.body;
 
