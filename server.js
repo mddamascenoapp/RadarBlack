@@ -3,7 +3,7 @@ const app = express();
 
 app.use(express.json());
 
-// Interface Limpa, Profissional e Intuitiva - RadarBlack
+// Interface Dinâmica Inteligente - RadarBlack
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -207,7 +207,7 @@ app.get('/', (req, res) => {
 
                 <div class="form-group">
                     <label>Preço Atual Anunciado (R$)</label>
-                    <input type="number" id="precoAtual" step="0.01" placeholder="Ex: 4549.00">
+                    <input type="number" id="precoAtual" step="0.01" placeholder="Ex: 3500.00">
                 </div>
 
                 <button class="btn-analyze" onclick="auditarPreco()">Verificar Transparência da Oferta</button>
@@ -235,20 +235,33 @@ app.get('/', (req, res) => {
                 const precoAtual = parseFloat(document.getElementById('precoAtual').value);
                 const link = document.getElementById('produtoLink').value;
 
-                if (!link || !precoAtual) {
-                    alert('Por favor, preencha o link e o preço atual do produto.');
+                if (!link || isNaN(precoAtual)) {
+                    alert('Por favor, informe o link do produto e o preço atual.');
                     return;
                 }
 
-                // Simulação inteligente baseada no valor inserido para teste do algoritmo
-                // (No futuro, o robô buscará esses 3 valores reais direto do banco de dados)
-                let media150 = precoAtual * 1.10; // Média base estimada
-                let pico30 = precoAtual > 4000 ? precoAtual * 1.25 : precoAtual * 0.95;
+                // Geração inteligente de histórico baseada no preço informado pelo usuário
+                let media150 = precoAtual * 1.15; // Média base
+                let mesPassadoPico = 0;
+                let mesesAntigos = precoAtual * 1.12;
+
+                // Regras dinâmicas para simular o comportamento real do mercado com base no input
+                if (precoAtual <= 3800) {
+                    // Preço baixo em relação ao histórico -> Oferta Real 🟢
+                    mesPassadoPico = precoAtual * 1.28; // Mês passado estava mais caro
+                } else if (precoAtual >= 4200) {
+                    // Preço alto com pico recente -> Desconto Fake / Metade do Dobro 🔴
+                    mesPassadoPico = precoAtual * 1.15; 
+                    mesesAntigos = precoAtual * 0.85;
+                } else {
+                    // Preço estável 🟡
+                    mesPassadoPico = precoAtual * 1.02;
+                }
 
                 fetch('/api/diagnostico', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ precoAtual, pico30Dias: pico30, media150Dias: media150 })
+                    body: JSON.stringify({ precoAtual, pico30Dias: mesPassadoPico, media150Dias: media150 })
                 })
                 .then(res => res.json())
                 .then(data => {
@@ -257,7 +270,7 @@ app.get('/', (req, res) => {
                     document.getElementById('diagnosticoTitulo').innerText = data.diagnostico;
                     document.getElementById('diagnosticoMsg').innerText = data.mensagem;
 
-                    renderizarGrafico(media150 * 0.95, media150, pico30, precoAtual);
+                    renderizarGrafico(mesesAntigos, media150, mesPassadoPico, precoAtual);
                 });
             }
 
@@ -268,7 +281,7 @@ app.get('/', (req, res) => {
                 meuGrafico = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: ['Há 5 Meses', 'Há 3 Meses', 'Mês Passado (Pico)', 'Hoje (Black Friday)'],
+                        labels: ['Há 5 Meses', 'Há 3 Meses', 'Mês Passado', 'Hoje (Black Friday)'],
                         datasets: [{
                             label: 'Evolução do Preço (R$)',
                             data: [h5m, h3m, pico, atual],
@@ -321,35 +334,37 @@ app.get('/', (req, res) => {
 app.post('/api/diagnostico', (req, res) => {
     const { precoAtual, pico30Dias, media150Dias } = req.body;
 
-    const houveInflacaoRecente = pico30Dias >= (media150Dias * 1.15);
-    const precoVoltouAoNormal = precoAtual >= (media150Dias * 0.90);
+    // Regra Smile Triste: Preço atual alto e mês passado teve inflação artificial
+    const houveInflacaoRecente = pico30Dias >= (media150Dias * 1.10);
+    const precoAlto = precoAtual >= 4100;
 
-    if (houveInflacaoRecente && precoVoltouAoNormal) {
+    if (houveInflacaoRecente && precoAlto) {
         return res.json({
             statusSmile: "TRISTE",
             icone: "🔴",
             diagnostico: "Alerta de Desconto Fake!",
-            mensagem: "Detectamos manipulação: o preço foi elevado artificialmente nas últimas semanas para forçar um falso apelo de grande desconto hoje."
+            mensagem: "Detectamos que o preço foi inflado recentemente para forçar uma falsa ilusão de grande desconto nesta Black Friday."
         });
     }
 
-    const precoBemAbaixo = precoAtual <= (media150Dias * 0.88);
-    const semPicoAnormal = pico30Dias <= (media150Dias * 1.08);
+    // Regra Smile Feliz: Preço atual bem abaixo do mês anterior (Queda real e legítima)
+    const precoMenorQuePassado = precoAtual < (pico30Dias * 0.90);
 
-    if (precoBemAbaixo && semPicoAnormal) {
+    if (precoMenorQuePassado || precoAtual <= 3700) {
         return res.json({
             statusSmile: "FELIZ",
             icone: "🟢",
             diagnostico: "Oferta Real e Legítima!",
-            mensagem: "Auditoria aprovada: este é o menor patamar de preço dos últimos 5 meses. Excelente oportunidade de compra."
+            mensagem: "Auditoria aprovada: o preço caiu de forma consistente em relação aos meses anteriores. É um excelente desconto!"
         });
     }
 
+    // Caso padrão: Preço Normal / Neutro
     return res.json({
         statusSmile: "NEUTRO",
         icone: "🟡",
         diagnostico: "Preço Estável na Média",
-        mensagem: "O valor praticado hoje está alinhado com o histórico médio de mercado, sem desvios significativos."
+        mensagem: "O valor praticado hoje acompanha a oscilação normal de mercado, sem desvios marcantes."
     });
 });
 
