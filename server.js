@@ -1,11 +1,13 @@
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Conexão com o Banco de Dados PostgreSQL no Render
+// Configuração do Banco PostgreSQL no Render
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -13,132 +15,191 @@ const pool = new Pool({
 
 app.use(express.json());
 
-// Recria a tabela corretamente garantindo todas as colunas necessárias
+// Seus IDs de Afiliado e AdSense (substitua com os seus quando tiver)
+const AFILIADO_AMAZON_TAG = process.env.AMAZON_TAG || 'radarblack-20';
+const ADSENSE_CLIENT_ID = process.env.ADSENSE_ID || 'ca-pub-0000000000000000';
+
+// Inicializa a tabela de histórico no banco de dados
 async function initDb() {
   try {
-    await pool.query(`DROP TABLE IF EXISTS historico_precos;`);
     await pool.query(`
-      CREATE TABLE historico_precos (
+      CREATE TABLE IF NOT EXISTS historico_precos (
         id SERIAL PRIMARY KEY,
         url_produto TEXT NOT NULL,
         preco NUMERIC(10,2) NOT NULL,
         data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        origem_dados VARCHAR(50) DEFAULT 'Auditado/Manual'
+        origem_dados VARCHAR(50) DEFAULT 'Busca Em Tempo Real'
       );
     `);
-    console.log('Tabela historico_precos recriada com sucesso.');
+    console.log('Tabela historico_precos pronta no PostgreSQL.');
   } catch (err) {
-    console.error('Erro ao inicializar o banco de dados:', err.message);
+    console.error('Erro ao inicializar BD:', err.message);
   }
 }
 initDb();
 
-// Rota para salvar novo registro de preço
-app.post('/api/registrar', async (req, res) => {
+// Função para Web Scraping / Busca de preço na página em tempo real
+async function buscarPrecoNaWeb(url) {
   try {
-    let { url, preco } = req.body;
-    if (!url || !preco) {
-      return res.status(400).json({ error: 'URL e Preço são obrigatórios.' });
+    const { data } = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+      },
+      timeout: 8000
+    });
+
+    const $ = cheerio.load(data);
+    let precoEncontrado = null;
+
+    // Estratégias de captura de preço para principais e-commerces (Amazon, Magalu, Mercado Livre, etc)
+    const seletoresPreco = [
+      '.a-price-whole',
+      '.price-template__actual-price',
+      '[data-testid="price-value"]',
+      '.ui-pdp-price__part--medium .aria-label',
+      '.price',
+      'meta[property="product:price:amount"]'
+    ];
+
+    for (const seletor of seletoresPreco) {
+      if (seletor.startsWith('meta')) {
+        const metaVal = $(seletor).attr('content');
+        if (metaVal) { precoEncontrado = metaVal; break; }
+      } else {
+        const textVal = $(seletor).first().text().trim();
+        if (textVal) { precoEncontrado = textVal; break; }
+      }
     }
+
+    if (precoEncontrado) {
+      // Limpa e converte o texto para número float (ex: "R$ 599,90" -> 599.90)
+      const limpo = precoEncontrado.replace(/[^\d\,.]/g, '').replace('.', '').replace(',', '.');
+      return parseFloat(limpo) || null;
+    }
+    return null;
+  } catch (err) {
+    console.log('Aviso: Não foi possível realizar o scraping automático, usando registro manual se fornecido.');
+    return null;
+  }
+}
+
+// Injeta Tag de Afiliado na URL
+function converterParaUrlAfiliado(url) {
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.hostname.includes('amazon.com')) {
+      parsedUrl.searchParams.set('tag', AFILIADO_AMAZON_TAG);
+      return parsedUrl.toString();
+    }
+    return url;
+  } catch (e) {
+    return url;
+  }
+}
+
+// Rota Principal de Pesquisa e Gravação de Histórico
+app.post('/api/buscar-e-auditar', async (req, res) => {
+  try {
+    let { url, precoManual } = req.body;
+    if (!url) return res.status(400).json({ error: 'Insira a URL do produto.' });
 
     url = String(url).trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       url = 'https://' + url;
     }
 
-    const precoFormatado = String(preco).replace(',', '.');
+    // 1. Tenta buscar o preço em tempo real na Web
+    let precoFinal = await buscarPrecoNaWeb(url);
 
+    // 2. Se a busca automática falhar/bloquear, usa o valor informado pelo usuário
+    if (!precoFinal && precoManual) {
+      precoFinal = parseFloat(String(precoManual).replace(',', '.'));
+    }
+
+    if (!precoFinal) {
+      return res.status(400).json({ 
+        error: 'Não conseguimos capturar o preço automaticamente desse site. Por favor, digite o preço atual no campo abaixo para guardar a auditoria.' 
+      });
+    }
+
+    // 3. Salva no banco PostgreSQL para montar seu Histórico do RadarBlack
     const query = `
-      INSERT INTO historico_precos (url_produto, preco)
-      VALUES ($1, $2)
+      INSERT INTO historico_precos (url_produto, preco, origem_dados)
+      VALUES ($1, $2, $3)
       RETURNING *;
     `;
-    const values = [url, parseFloat(precoFormatado)];
-    const result = await pool.query(query, values);
+    const result = await pool.query(query, [url, precoFinal, 'Busca Em Tempo Real']);
 
-    res.json({ success: true, registro: result.rows[0] });
+    // 4. Converte para Link de Afiliado
+    const urlAfiliado = converterParaUrlAfiliado(url);
+
+    res.json({
+      success: true,
+      precoCaptação: precoFinal,
+      urlAfiliado,
+      registro: result.rows[0]
+    });
   } catch (err) {
-    console.error('Erro detalhado no banco de dados:', err);
-    res.status(500).json({ error: 'Erro no Banco: ' + (err.message || 'Erro desconhecido') });
+    console.error('Erro na rota de busca:', err);
+    res.status(500).json({ error: 'Erro no servidor: ' + err.message });
   }
 });
 
-// Rota para consultar o histórico de um link
+// Rota do Histórico
 app.get('/api/historico', async (req, res) => {
   try {
     let { url } = req.query;
-    if (!url) {
-      return res.status(400).json({ error: 'URL do produto é obrigatória.' });
-    }
+    if (!url) return res.status(400).json({ error: 'URL necessária.' });
 
     url = String(url).trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
 
-    const query = `
-      SELECT * FROM historico_precos
-      WHERE url_produto = $1
-      ORDER BY data_registro ASC;
-    `;
-    const result = await pool.query(query, [url]);
+    const result = await pool.query(
+      'SELECT * FROM historico_precos WHERE url_produto = $1 ORDER BY data_registro DESC',
+      [url]
+    );
     res.json(result.rows);
   } catch (err) {
-    console.error('Erro ao buscar histórico:', err);
-    res.status(500).json({ error: 'Erro ao consultar banco de dados: ' + err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Rota para gerar o Laudo de Auditoria com Hash SHA-256
+// Rota do Laudo PDF
 app.get('/api/laudo', async (req, res) => {
   try {
     let { url } = req.query;
-    if (!url) {
-      return res.status(400).json({ error: 'URL do produto é obrigatória para o laudo.' });
-    }
+    if (!url) return res.status(400).json({ error: 'URL necessária.' });
 
     url = String(url).trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
 
-    const query = `
-      SELECT * FROM historico_precos
-      WHERE url_produto = $1
-      ORDER BY data_registro ASC;
-    `;
-    const result = await pool.query(query, [url]);
+    const result = await pool.query(
+      'SELECT * FROM historico_precos WHERE url_produto = $1 ORDER BY data_registro ASC',
+      [url]
+    );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Nenhum histórico registrado para este link.' });
-    }
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Sem histórico registrado.' });
 
     const registros = result.rows;
     const dataEmissao = new Date().toISOString();
-
-    const dadosHash = JSON.stringify({ url, registros, dataEmissao });
-    const hashAutenticidade = crypto.createHash('sha256').update(dadosHash).digest('hex');
+    const hashAutenticidade = crypto.createHash('sha256').update(JSON.stringify({ url, registros, dataEmissao })).digest('hex');
 
     res.json({
       titulo: "LAUDO DE AUDITORIA DE PREÇOS E INTEGRIDADE DIGITAL",
-      plataforma: "RadarBlack — Monitoramento e Validação Anti-Fraude",
+      plataforma: "RadarBlack — Validação Anti-Fraude",
       dataEmissao,
       urlProduto: url,
       hashAutenticidade,
       totalRegistros: registros.length,
-      historico: registros.map(r => ({
-        data: r.data_registro,
-        preco: r.preco,
-        fonte: r.origem_dados || 'Auditado/Manual'
-      }))
+      historico: registros.map(r => ({ data: r.data_registro, preco: r.preco, fonte: r.origem_dados }))
     });
   } catch (err) {
-    console.error('Erro ao gerar laudo:', err);
-    res.status(500).json({ error: 'Erro ao gerar laudo de auditoria: ' + err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Rota Principal — Serve a interface gráfica aprimorada do RadarBlack
+// Rota da Interface Visual do Site
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -146,54 +207,43 @@ app.get('/', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>RadarBlack — Auditoria e Inteligência de Preços</title>
+      <title>RadarBlack — Verificador e Comparador em Tempo Real</title>
+      <!-- Script do Google AdSense para Monetização por Anúncios -->
+      <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT_ID}" crossorigin="anonymous"></script>
       <style>
-        * { box-sizing: border-box; font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { background-color: #080c14; color: #f3f4f6; margin: 0; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #080c14; color: #f3f4f6; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
         
-        .header-brand { text-align: center; margin-bottom: 25px; }
-        .logo-box { display: inline-flex; align-items: center; gap: 12px; background: rgba(56, 189, 248, 0.08); padding: 10px 22px; border-radius: 50px; border: 1px solid rgba(56, 189, 248, 0.2); }
-        .logo-icon { font-size: 32px; filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.6)); }
-        .logo-text { font-size: 30px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
+        .header-brand { text-align: center; margin-bottom: 20px; }
+        .logo-box { display: inline-flex; align-items: center; gap: 10px; background: rgba(56, 189, 248, 0.1); padding: 8px 20px; border-radius: 40px; border: 1px solid rgba(56, 189, 248, 0.2); }
+        .logo-icon { font-size: 28px; }
+        .logo-text { font-size: 26px; font-weight: 800; color: #ffffff; }
         .logo-text span { color: #38bdf8; }
-        .subtitle { color: #94a3b8; font-size: 14px; margin-top: 10px; font-weight: 400; }
 
-        .container { max-width: 680px; width: 100%; background: #0f172a; border: 1px solid #1e293b; padding: 32px; border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+        .container { max-width: 680px; width: 100%; background: #0f172a; border: 1px solid #1e293b; padding: 28px; border-radius: 16px; box-shadow: 0 15px 35px rgba(0,0,0,0.5); }
         
-        .badge-status { display: inline-block; background: rgba(16, 185, 129, 0.15); color: #34d399; font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.3); margin-bottom: 20px; }
+        .ad-banner { width: 100%; background: #131d31; border: 1px dashed #334155; border-radius: 8px; padding: 12px; text-align: center; font-size: 11px; color: #64748b; margin-bottom: 20px; }
 
-        .form-group { margin-bottom: 22px; }
-        label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #38bdf8; margin-bottom: 8px; font-weight: 700; }
-        input { width: 100%; padding: 14px; background: #080c14; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 14px; transition: border-color 0.2s; }
-        input:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15); }
+        .form-group { margin-bottom: 18px; }
+        label { display: block; font-size: 11px; text-transform: uppercase; color: #38bdf8; margin-bottom: 6px; font-weight: 700; }
+        input { width: 100%; padding: 13px; background: #080c14; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 14px; }
+        input:focus { outline: none; border-color: #38bdf8; }
 
-        .btn-main { width: 100%; padding: 15px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 10px; transition: transform 0.1s, box-shadow 0.2s; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3); }
-        .btn-main:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(2, 132, 199, 0.4); }
-        .btn-laudo { width: 100%; padding: 13px; background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; text-transform: uppercase; margin-top: 15px; display: none; box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3); }
-        .btn-laudo:hover { background: #047857; }
+        .btn-main { width: 100%; padding: 14px; background: #0284c7; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; text-transform: uppercase; transition: background 0.2s; }
+        .btn-main:hover { background: #0369a1; }
 
-        .status-box { margin-top: 20px; padding: 15px; border-radius: 8px; font-size: 13px; display: none; word-break: break-word; }
+        .btn-buy { display: none; width: 100%; padding: 14px; background: #d97706; color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 14px; cursor: pointer; text-transform: uppercase; text-decoration: none; text-align: center; margin-top: 15px; }
+        .btn-buy:hover { background: #b45309; }
+
+        .btn-laudo { width: 100%; padding: 12px; background: #059669; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; text-transform: uppercase; margin-top: 10px; display: none; }
+
+        .status-box { margin-top: 18px; padding: 14px; border-radius: 8px; font-size: 13px; display: none; word-break: break-word; }
         .status-success { background: rgba(6, 78, 59, 0.6); color: #a7f3d0; border: 1px solid #059669; }
         .status-error { background: rgba(127, 29, 29, 0.6); color: #fecaca; border: 1px solid #dc2626; }
 
-        .historico-list { margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 20px; }
-        .historico-header { font-size: 13px; font-weight: 700; color: #f3f4f6; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
-        .historico-item { display: flex; justify-content: space-between; padding: 12px 14px; background: #080c14; border: 1px solid #1e293b; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+        .historico-list { margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px; }
+        .historico-item { display: flex; justify-content: space-between; padding: 10px 12px; background: #080c14; border: 1px solid #1e293b; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
         .historico-item strong { color: #38bdf8; }
-
-        /* Card de Monetização / Afiliados com Testador Ativo */
-        .afiliado-card { margin-top: 32px; padding: 20px; background: #131d31; border: 1px solid #1e293b; border-radius: 12px; }
-        .afiliado-header { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #fbbf24; letter-spacing: 0.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-        .afiliado-desc { font-size: 12px; color: #94a3b8; margin-bottom: 16px; line-height: 1.5; }
-        .afiliado-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-        
-        .btn-partner { flex: 1; min-width: 180px; padding: 10px 16px; border-radius: 8px; font-size: 12px; font-weight: 700; text-decoration: none; text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s; }
-        .btn-amazon { background: #d97706; color: #ffffff; }
-        .btn-amazon:hover { background: #b45309; }
-        .btn-check { background: #1e293b; color: #38bdf8; border: 1px solid #334155; }
-        .btn-check:hover { background: #334155; }
-
-        .link-status-info { margin-top: 12px; font-size: 11px; color: #10b981; display: none; background: rgba(16, 185, 129, 0.1); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.2); }
       </style>
     </head>
     <body>
@@ -202,86 +252,82 @@ app.get('/', (req, res) => {
           <span class="logo-icon">🔍</span>
           <span class="logo-text">Radar<span>Black</span></span>
         </div>
-        <div class="subtitle">Auditoria de Preços & Validação de Histórico em E-commerce</div>
+        <p style="color:#94a3b8; font-size:13px; margin-top:8px;">Busca de Preços em Tempo Real & Histórico Acumulado</p>
       </div>
 
       <div class="container">
-        <div class="badge-status">● Sistema de Auditoria Ativo</div>
-
-        <div class="form-group">
-          <label>URL / Link do Produto na Loja</label>
-          <input type="text" id="urlProduto" placeholder="Cole o link (Ex: https://www.amazon.com.br/dp/...)">
+        <!-- Banner de Anúncio no Topo (Monetização) -->
+        <div class="ad-banner">
+          📢 Publicidade / Espaço AdSense
         </div>
 
         <div class="form-group">
-          <label>Preço Atual Auditado na Loja (R$)</label>
+          <label>Cole o Link do Produto (Qualquer Loja)</label>
+          <input type="text" id="urlProduto" placeholder="Ex: https://www.amazon.com.br/dp/B0DJCFVZ3H">
+        </div>
+
+        <div class="form-group">
+          <label>Preço Atual (Opcional - caso a loja bloqueie busca automática)</label>
           <input type="text" id="precoProduto" placeholder="Ex: 599.99">
         </div>
 
-        <button class="btn-main" onclick="registrarEAuditar()">REGISTRAR PREÇO E AUDITAR</button>
+        <button class="btn-main" onclick="buscarEAuditar()">⚡ BUSCAR MELHOR PREÇO & AUDITAR</button>
+
+        <a id="btnComprar" href="#" target="_blank" rel="nofollow" class="btn-buy">
+          🛒 IR PARA A LOJA COM O MENOR PREÇO (OFERTA AUDITADA)
+        </a>
+
         <button id="btnLaudo" class="btn-laudo" onclick="exportarLaudoPDF()">📄 EXPORTAR LAUDO DE AUDITORIA (PDF)</button>
 
         <div id="statusBox" class="status-box"></div>
         <div id="historicoBox" class="historico-list"></div>
 
-        <!-- Painel de Afiliados e Verificador de Links -->
-        <div class="afiliado-card">
-          <div class="afiliado-header">🏷️ Loja Parceira & Monetização Ativa</div>
-          <div class="afiliado-desc">Acesse as ofertas auditadas nas lojas oficiais ou teste o redirecionamento com a sua tag de afiliado:</div>
-          
-          <div class="afiliado-actions">
-            <a id="linkAmazon" href="https://www.amazon.com.br?tag=SEU_ID_AMAZON-20" target="_blank" rel="nofollow" class="btn-partner btn-amazon">
-              🛒 Ofertas Amazon (Afiliado)
-            </a>
-            <button onclick="verificarLinkAfiliado()" class="btn-partner btn-check">
-              ⚡ Testar Redirecionamento
-            </button>
-          </div>
-
-          <div id="linkStatus" class="link-status-info"></div>
+        <!-- Banner de Anúncio no Rodapé (Monetização) -->
+        <div class="ad-banner" style="margin-top: 25px; margin-bottom: 0;">
+          📢 Espaço de Patrocínio / Links Recomendados
         </div>
-
       </div>
 
       <script>
         let urlAtual = '';
 
-        async function registrarEAuditar() {
+        async function buscarEAuditar() {
           const urlInput = document.getElementById('urlProduto');
           const precoInput = document.getElementById('precoProduto');
           let url = urlInput.value.trim();
-          const preco = precoInput.value.trim();
+          const precoManual = precoInput.value.trim();
 
-          if (!url || !preco) {
-            exibirStatus('Preencha o link e o preço antes de enviar.', 'error');
+          if (!url) {
+            exibirStatus('Por favor, insira o link do produto.', 'error');
             return;
           }
 
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
-            urlInput.value = url;
-          }
-
+          exibirStatus('🔎 Buscando preço mais recente na internet...', 'success');
           urlAtual = url;
 
           try {
-            const res = await fetch('/api/registrar', {
+            const res = await fetch('/api/buscar-e-auditar', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url, preco })
+              body: JSON.stringify({ url, precoManual })
             });
 
             const data = await res.json();
 
             if (data.success) {
-              exibirStatus('Preço registrado com sucesso no banco de dados!', 'success');
-              precoInput.value = '';
+              exibirStatus('✅ Preço verificado e adicionado ao histórico: R$ ' + data.precoCaptação.toFixed(2), 'success');
+              
+              // Exibe botão com link de afiliado
+              const btnBuy = document.getElementById('btnComprar');
+              btnBuy.href = data.urlAfiliado;
+              btnBuy.style.display = 'block';
+
               carregarHistorico(url);
             } else {
-              exibirStatus(data.error || 'Erro ao registrar o preço.', 'error');
+              exibirStatus(data.error, 'error');
             }
           } catch (err) {
-            exibirStatus('Erro de conexão com o servidor.', 'error');
+            exibirStatus('Erro de comunicação com o servidor.', 'error');
           }
         }
 
@@ -294,7 +340,7 @@ app.get('/', (req, res) => {
             const btnLaudo = document.getElementById('btnLaudo');
 
             if (Array.isArray(historico) && historico.length > 0) {
-              box.innerHTML = '<div class="historico-header"><span>Histórico Guardado</span><span>(' + historico.length + ' registros)</span></div>' + 
+              box.innerHTML = '<strong>Histórico de Consultas Deste Produto:</strong><br><br>' + 
                 historico.map(h => \`
                   <div class="historico-item">
                     <span>\${new Date(h.data_registro).toLocaleString('pt-BR')}</span>
@@ -328,8 +374,7 @@ app.get('/', (req, res) => {
                   <title>Laudo de Auditoria - RadarBlack</title>
                   <style>
                     body { font-family: Arial, sans-serif; padding: 30px; color: #111; }
-                    h1 { color: #000; border-bottom: 2px solid #000; padding-bottom: 8px; font-size: 18px; margin-bottom: 5px; }
-                    .sub { font-size: 11px; color: #555; margin-bottom: 20px; }
+                    h1 { color: #000; border-bottom: 2px solid #000; padding-bottom: 8px; font-size: 18px; }
                     .info { font-size: 12px; line-height: 1.6; margin-bottom: 20px; }
                     .hash-box { background: #f4f4f4; border: 1px dashed #444; padding: 10px; word-break: break-all; font-family: monospace; font-size: 11px; margin: 20px 0; }
                     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -340,28 +385,17 @@ app.get('/', (req, res) => {
                 </head>
                 <body>
                   <h1>RADARBLACK — LAUDO DE AUDITORIA DE PREÇOS</h1>
-                  <div class="sub">Plataforma de Verificação e Integridade Digital de Histórico de Ofertas</div>
-                  
                   <div class="info">
                     <strong>URL Auditada:</strong> \${laudo.urlProduto}<br>
-                    <strong>Data de Emissão do Laudo:</strong> \${new Date(laudo.dataEmissao).toLocaleString('pt-BR')}<br>
-                    <strong>Total de Registros Encontrados:</strong> \${laudo.totalRegistros}
+                    <strong>Data de Emissão:</strong> \${new Date(laudo.dataEmissao).toLocaleString('pt-BR')}<br>
+                    <strong>Total de Verificações no Histórico:</strong> \${laudo.totalRegistros}
                   </div>
-
                   <div class="hash-box">
-                    <strong>CÓDIGO DE AUTENTICIDADE E INTEGRIDADE (HASH SHA-256):</strong><br>
-                    \${laudo.hashAutenticidade}
+                    <strong>CÓDIGO DE AUTENTICIDADE (HASH SHA-256):</strong><br>\${laudo.hashAutenticidade}
                   </div>
-
-                  <h3>Histórico Cronológico Registrado</h3>
+                  <h3>Histórico de Preços Acumulado</h3>
                   <table>
-                    <thead>
-                      <tr>
-                        <th>Data e Hora da Coleta</th>
-                        <th>Preço Verificado</th>
-                        <th>Origem da Coleta</th>
-                      </tr>
-                    </thead>
+                    <thead><tr><th>Data</th><th>Preço Registrado</th><th>Origem</th></tr></thead>
                     <tbody>
                       \${laudo.historico.map(h => \`
                         <tr>
@@ -372,30 +406,14 @@ app.get('/', (req, res) => {
                       \`).join('')}
                     </tbody>
                   </table>
-
-                  <div class="footer">
-                    Este documento foi gerado pelo sistema RadarBlack com validação criptográfica SHA-256.<br>
-                    Garantia de auditoria contra adulteração de histórico de preços em e-commerce.
-                  </div>
+                  <div class="footer">Gerado por RadarBlack via validação SHA-256.</div>
                 </body>
               </html>
             \`);
             janela.document.close();
             janela.print();
           } catch (err) {
-            alert('Erro ao gerar o relatório.');
-          }
-        }
-
-        function verificarLinkAfiliado() {
-          const link = document.getElementById('linkAmazon').href;
-          const statusBox = document.getElementById('linkStatus');
-          statusBox.style.display = 'block';
-          
-          if (link.includes('tag=')) {
-            statusBox.innerHTML = '✔ <strong>Link de Afiliado Pronto:</strong> O destino contém o parâmetro de rastreamento de comissão (<code>' + link.split('?')[1] + '</code>).';
-          } else {
-            statusBox.innerHTML = '⚠️ <strong>Atenção:</strong> Substitua o ID no código do server.js para ativar a comissão.';
+            alert('Erro ao gerar laudo em PDF.');
           }
         }
 
