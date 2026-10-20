@@ -13,11 +13,13 @@ const pool = new Pool({
 
 app.use(express.json());
 
-// Criar tabela de histórico de preços
+// Recria a tabela corretamente garantindo todas as colunas necessárias
 async function initDb() {
   try {
+    // Apaga a tabela antiga se houver conflito de colunas e cria a nova limpa
+    await pool.query(`DROP TABLE IF EXISTS historico_precos;`);
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS historico_precos (
+      CREATE TABLE historico_precos (
         id SERIAL PRIMARY KEY,
         url_produto TEXT NOT NULL,
         preco NUMERIC(10,2) NOT NULL,
@@ -25,7 +27,7 @@ async function initDb() {
         origem_dados VARCHAR(50) DEFAULT 'Auditado/Manual'
       );
     `);
-    console.log('Tabela historico_precos verificada/inicializada.');
+    console.log('Tabela historico_precos recriada com sucesso.');
   } catch (err) {
     console.error('Erro ao inicializar o banco de dados:', err.message);
   }
@@ -40,24 +42,25 @@ app.post('/api/registrar', async (req, res) => {
       return res.status(400).json({ error: 'URL e Preço são obrigatórios.' });
     }
 
-    // Se o link não tiver http:// ou https://, adiciona automaticamente
     url = String(url).trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       url = 'https://' + url;
     }
+
+    // Corrige vírgula para ponto caso o usuário digite o preço com vírgula (ex: 599,99)
+    const precoFormatado = String(preco).replace(',', '.');
 
     const query = `
       INSERT INTO historico_precos (url_produto, preco)
       VALUES ($1, $2)
       RETURNING *;
     `;
-    const values = [url, parseFloat(preco)];
+    const values = [url, parseFloat(precoFormatado)];
     const result = await pool.query(query, values);
 
     res.json({ success: true, registro: result.rows[0] });
   } catch (err) {
     console.error('Erro detalhado no banco de dados:', err);
-    // Retorna a mensagem de erro exata gerada pelo banco de dados para fácil diagnóstico
     res.status(500).json({ error: 'Erro no Banco: ' + (err.message || 'Erro desconhecido') });
   }
 });
@@ -115,7 +118,6 @@ app.get('/api/laudo', async (req, res) => {
     const registros = result.rows;
     const dataEmissao = new Date().toISOString();
 
-    // Gera o Hash SHA-256 para garantir a integridade do relatório
     const dadosHash = JSON.stringify({ url, registros, dataEmissao });
     const hashAutenticidade = crypto.createHash('sha256').update(dadosHash).digest('hex');
 
@@ -165,187 +167,4 @@ app.get('/', (req, res) => {
         .status-success { background: #064e3b; color: #a7f3d0; border: 1px solid #059669; }
         .status-error { background: #7f1d1d; color: #fecaca; border: 1px solid #dc2626; }
         .historico-list { margin-top: 25px; border-top: 1px solid #1f2937; padding-top: 15px; }
-        .historico-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #1f2937; font-size: 13px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="logo">🔍 RadarBlack</div>
-        <div class="subtitle">Monitoramento e Auditoria Baseada em Histórico Real</div>
-
-        <div class="form-group">
-          <label>LINK DO PRODUTO NA LOJA</label>
-          <input type="text" id="urlProduto" placeholder="Ex: https://www.loja.com.br/produto-123">
-        </div>
-
-        <div class="form-group">
-          <label>PREÇO ATUAL VERIFICADO NA LOJA (R$)</label>
-          <input type="number" step="0.01" id="precoProduto" placeholder="Ex: 2500.00">
-        </div>
-
-        <button class="btn-main" onclick="registrarEAuditar()">REGISTRAR PREÇO E AUDITAR</button>
-        <button id="btnLaudo" class="btn-laudo" onclick="exportarLaudoPDF()">📄 EXPORTAR LAUDO DE AUDITORIA (PDF)</button>
-
-        <div id="statusBox" class="status-box"></div>
-        <div id="historicoBox" class="historico-list"></div>
-      </div>
-
-      <script>
-        let urlAtual = '';
-
-        async function registrarEAuditar() {
-          const urlInput = document.getElementById('urlProduto');
-          const precoInput = document.getElementById('precoProduto');
-          let url = urlInput.value.trim();
-          const preco = precoInput.value.trim();
-
-          if (!url || !preco) {
-            exibirStatus('Preencha o link e o preço antes de enviar.', 'error');
-            return;
-          }
-
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
-            urlInput.value = url;
-          }
-
-          urlAtual = url;
-
-          try {
-            const res = await fetch('/api/registrar', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url, preco })
-            });
-
-            const data = await res.json();
-
-            if (data.success) {
-              exibirStatus('Preço registrado com sucesso no banco de dados!', 'success');
-              precoInput.value = '';
-              carregarHistorico(url);
-            } else {
-              exibirStatus(data.error || 'Erro ao registrar o preço.', 'error');
-            }
-          } catch (err) {
-            exibirStatus('Erro de conexão com o servidor.', 'error');
-          }
-        }
-
-        async function carregarHistorico(url) {
-          try {
-            const res = await fetch('/api/historico?url=' + encodeURIComponent(url));
-            const historico = await res.json();
-
-            const box = document.getElementById('historicoBox');
-            const btnLaudo = document.getElementById('btnLaudo');
-
-            if (Array.isArray(historico) && historico.length > 0) {
-              box.innerHTML = '<strong>Histórico de Alterações Guardadas:</strong><br><br>' + 
-                historico.map(h => \`
-                  <div class="historico-item">
-                    <span>\${new Date(h.data_registro).toLocaleString('pt-BR')}</span>
-                    <strong>R$ \${Number(h.preco).toFixed(2)}</strong>
-                  </div>
-                \`).join('');
-              
-              btnLaudo.style.display = 'block';
-            }
-          } catch (err) {
-            console.error('Erro ao carregar histórico:', err);
-          }
-        }
-
-        async function exportarLaudoPDF() {
-          if (!urlAtual) return;
-
-          try {
-            const res = await fetch('/api/laudo?url=' + encodeURIComponent(urlAtual));
-            const laudo = await res.json();
-
-            if (laudo.error) {
-              alert(laudo.error);
-              return;
-            }
-
-            const janela = window.open('', '_blank');
-            janela.document.write(\`
-              <html>
-                <head>
-                  <title>Laudo de Auditoria - RadarBlack</title>
-                  <style>
-                    body { font-family: Arial, sans-serif; padding: 30px; color: #111; }
-                    h1 { color: #000; border-bottom: 2px solid #000; padding-bottom: 8px; font-size: 18px; margin-bottom: 5px; }
-                    .sub { font-size: 11px; color: #555; margin-bottom: 20px; }
-                    .info { font-size: 12px; line-height: 1.6; margin-bottom: 20px; }
-                    .hash-box { background: #f4f4f4; border: 1px dashed #444; padding: 10px; word-break: break-all; font-family: monospace; font-size: 11px; margin: 20px 0; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 12px; }
-                    th { background: #eee; }
-                    .footer { margin-top: 30px; font-size: 10px; color: #666; text-align: center; border-top: 1px solid #ddd; padding-top: 10px; }
-                  </style>
-                </head>
-                <body>
-                  <h1>RADARBLACK — LAUDO DE AUDITORIA DE PREÇOS</h1>
-                  <div class="sub">Plataforma de Verificação e Integridade Digital de Histórico de Ofertas</div>
-                  
-                  <div class="info">
-                    <strong>URL Auditada:</strong> \${laudo.urlProduto}<br>
-                    <strong>Data de Emissão do Laudo:</strong> \${new Date(laudo.dataEmissao).toLocaleString('pt-BR')}<br>
-                    <strong>Total de Registros Encontrados:</strong> \${laudo.totalRegistros}
-                  </div>
-
-                  <div class="hash-box">
-                    <strong>CÓDIGO DE AUTENTICIDADE E INTEGRIDADE (HASH SHA-256):</strong><br>
-                    \${laudo.hashAutenticidade}
-                  </div>
-
-                  <h3>Histórico Cronológico Registrado</h3>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Data e Hora da Coleta</th>
-                        <th>Preço Verificado</th>
-                        <th>Origem da Coleta</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      \${laudo.historico.map(h => \`
-                        <tr>
-                          <td>\${new Date(h.data).toLocaleString('pt-BR')}</td>
-                          <td>R$ \${Number(h.preco).toFixed(2)}</td>
-                          <td>\${h.fonte}</td>
-                        </tr>
-                      \`).join('')}
-                    </tbody>
-                  </table>
-
-                  <div class="footer">
-                    Este documento foi gerado pelo sistema RadarBlack com validação criptográfica SHA-256.<br>
-                    Garantia de auditoria contra adulteração de histórico de preços em e-commerce.
-                  </div>
-                </body>
-              </html>
-            \`);
-            janela.document.close();
-            janela.print();
-          } catch (err) {
-            alert('Erro ao gerar o relatório.');
-          }
-        }
-
-        function exibirStatus(msg, tipo) {
-          const statusBox = document.getElementById('statusBox');
-          statusBox.textContent = msg;
-          statusBox.className = 'status-box status-' + tipo;
-          statusBox.style.display = 'block';
-        }
-      </script>
-    </body>
-    </html>
-  `);
-});
-
-app.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port}`);
-});
+        .historico-item { display: flex; justify-content: space-between; padding: 8px 0; border
