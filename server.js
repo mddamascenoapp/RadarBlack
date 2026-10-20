@@ -222,3 +222,108 @@ app.get('/', (req, res) => {
               box.innerHTML = '<strong>Histórico de Alterações Guardadas:</strong><br><br>' + 
                 historico.map(h => \`
                   <div class="historico-item">
+                    <span>\${new Date(h.data_registro).toLocaleString('pt-BR')}</span>
+                    <strong>R$ \${Number(h.preco).toFixed(2)}</strong>
+                  </div>
+                \`).join('');
+              
+              btnLaudo.style.display = 'block';
+            }
+          } catch (err) {
+            console.error('Erro ao carregar histórico:', err);
+          }
+        }
+
+        async function exportarLaudoPDF() {
+          if (!urlAtual) return;
+
+          try {
+            const res = await fetch('/api/laudo?url=' + encodeURIComponent(urlAtual));
+            const laudo = await res.json();
+
+            if (laudo.error) {
+              alert(laudo.error);
+              return;
+            }
+
+            const janela = window.open('', '_blank');
+            janela.document.write(\`
+              <html>
+                <head>
+                  <title>Laudo de Auditoria - RadarBlack</title>
+                  <style>
+                    body { font-family: Arial, sans-serif; padding: 30px; color: #111; }
+                    h1 { color: #000; border-bottom: 2px solid #000; padding-bottom: 8px; font-size: 18px; margin-bottom: 5px; }
+                    .sub { font-size: 11px; color: #555; margin-bottom: 20px; }
+                    .info { font-size: 12px; line-height: 1.6; margin-bottom: 20px; }
+                    .hash-box { background: #f4f4f4; border: 1px dashed #444; padding: 10px; word-break: break-all; font-family: monospace; font-size: 11px; margin: 20px 0; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 12px; }
+                    th { background: #eee; }
+                    .footer { margin-top: 30px; font-size: 10px; color: #666; text-align: center; border-top: 1px solid #ddd; padding-top: 10px; }
+                  </style>
+                </head>
+                <body>
+                  <h1>RADARBLACK — LAUDO DE AUDITORIA DE PREÇOS</h1>
+                  <div class="sub">Plataforma de Verificação e Integridade Digital de Histórico de Ofertas</div>
+                  
+                  <div class="info">
+                    <strong>URL Auditada:</strong> \${laudo.urlProduto}<br>
+                    <strong>Data de Emissão do Laudo:</strong> \${new Date(laudo.dataEmissao).toLocaleString('pt-BR')}<br>
+                    <strong>Total de Registros Encontrados:</strong> \${laudo.totalRegistros}
+                  </div>
+
+                  <div class="hash-box">
+                    <strong>CÓDIGO DE AUTENTICIDADE E INTEGRIDADE (HASH SHA-256):</strong><br>
+                    \${laudo.hashAutenticidade}
+                  </div>
+
+                  <h3>Histórico Cronológico Registrado</h3>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Data e Hora da Coleta</th>
+                        <th>Preço Verificado</th>
+                        <th>Origem da Coleta</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      \${laudo.historico.map(h => \`
+                        <tr>
+                          <td>\${new Date(h.data).toLocaleString('pt-BR')}</td>
+                          <td>R$ \${Number(h.preco).toFixed(2)}</td>
+                          <td>\${h.fonte}</td>
+                        </tr>
+                      \`).join('')}
+                    </tbody>
+                  </table>
+
+                  <div class="footer">
+                    Este documento foi gerado pelo sistema RadarBlack com validação criptográfica SHA-256.<br>
+                    Garantia de auditoria contra adulteração de histórico de preços em e-commerce.
+                  </div>
+                </body>
+              </html>
+            \`);
+            janela.document.close();
+            janela.print();
+          } catch (err) {
+            alert('Erro ao gerar o relatório.');
+          }
+        }
+
+        function exibirStatus(msg, tipo) {
+          const statusBox = document.getElementById('statusBox');
+          statusBox.textContent = msg;
+          statusBox.className = 'status-box status-' + tipo;
+          statusBox.style.display = 'block';
+        }
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+app.listen(port, () => {
+  console.log(`Servidor rodando na porta ${port}`);
+});
