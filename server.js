@@ -13,7 +13,7 @@ const pool = new Pool({
 
 app.use(express.json());
 
-// Criar tabela de histórico de preços garantindo campo TEXT para URLs longas
+// Criar tabela de histórico de preços
 async function initDb() {
   try {
     await pool.query(`
@@ -25,11 +25,9 @@ async function initDb() {
         origem_dados VARCHAR(50) DEFAULT 'Auditado/Manual'
       );
     `);
-    // Garante alteração do tipo caso a tabela antiga usasse VARCHAR limitado
-    await pool.query(`ALTER TABLE historico_precos ALTER COLUMN url_produto TYPE TEXT;`).catch(() => {});
-    console.log('Tabela historico_precos inicializada com sucesso.');
+    console.log('Tabela historico_precos verificada/inicializada.');
   } catch (err) {
-    console.error('Erro ao inicializar o banco de dados:', err);
+    console.error('Erro ao inicializar o banco de dados:', err.message);
   }
 }
 initDb();
@@ -37,9 +35,15 @@ initDb();
 // Rota para salvar novo registro de preço
 app.post('/api/registrar', async (req, res) => {
   try {
-    const { url, preco } = req.body;
+    let { url, preco } = req.body;
     if (!url || !preco) {
       return res.status(400).json({ error: 'URL e Preço são obrigatórios.' });
+    }
+
+    // Se o link não tiver http:// ou https://, adiciona automaticamente
+    url = String(url).trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
     }
 
     const query = `
@@ -47,22 +51,28 @@ app.post('/api/registrar', async (req, res) => {
       VALUES ($1, $2)
       RETURNING *;
     `;
-    const values = [String(url), parseFloat(preco)];
+    const values = [url, parseFloat(preco)];
     const result = await pool.query(query, values);
 
     res.json({ success: true, registro: result.rows[0] });
   } catch (err) {
-    console.error('Erro ao salvar registro:', err);
-    res.status(500).json({ error: 'Erro ao salvar no banco de dados: ' + err.message });
+    console.error('Erro detalhado no banco de dados:', err);
+    // Retorna a mensagem de erro exata gerada pelo banco de dados para fácil diagnóstico
+    res.status(500).json({ error: 'Erro no Banco: ' + (err.message || 'Erro desconhecido') });
   }
 });
 
 // Rota para consultar o histórico de um link
 app.get('/api/historico', async (req, res) => {
   try {
-    const { url } = req.query;
+    let { url } = req.query;
     if (!url) {
       return res.status(400).json({ error: 'URL do produto é obrigatória.' });
+    }
+
+    url = String(url).trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
     }
 
     const query = `
@@ -70,20 +80,25 @@ app.get('/api/historico', async (req, res) => {
       WHERE url_produto = $1
       ORDER BY data_registro ASC;
     `;
-    const result = await pool.query(query, [String(url)]);
+    const result = await pool.query(query, [url]);
     res.json(result.rows);
   } catch (err) {
     console.error('Erro ao buscar histórico:', err);
-    res.status(500).json({ error: 'Erro ao consultar banco de dados.' });
+    res.status(500).json({ error: 'Erro ao consultar banco de dados: ' + err.message });
   }
 });
 
 // Rota para gerar o Laudo de Auditoria com Hash SHA-256
 app.get('/api/laudo', async (req, res) => {
   try {
-    const { url } = req.query;
+    let { url } = req.query;
     if (!url) {
       return res.status(400).json({ error: 'URL do produto é obrigatória para o laudo.' });
+    }
+
+    url = String(url).trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
     }
 
     const query = `
@@ -91,7 +106,7 @@ app.get('/api/laudo', async (req, res) => {
       WHERE url_produto = $1
       ORDER BY data_registro ASC;
     `;
-    const result = await pool.query(query, [String(url)]);
+    const result = await pool.query(query, [url]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Nenhum histórico registrado para este link.' });
@@ -119,7 +134,7 @@ app.get('/api/laudo', async (req, res) => {
     });
   } catch (err) {
     console.error('Erro ao gerar laudo:', err);
-    res.status(500).json({ error: 'Erro ao gerar laudo de auditoria.' });
+    res.status(500).json({ error: 'Erro ao gerar laudo de auditoria: ' + err.message });
   }
 });
 
@@ -146,9 +161,9 @@ app.get('/', (req, res) => {
         .btn-main:hover { background: #0369a1; }
         .btn-laudo { width: 100%; padding: 12px; background: #059669; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 13px; cursor: pointer; text-transform: uppercase; margin-top: 15px; display: none; }
         .btn-laudo:hover { background: #047857; }
-        .status-box { margin-top: 20px; padding: 15px; border-radius: 6px; font-size: 13px; display: none; }
+        .status-box { margin-top: 20px; padding: 15px; border-radius: 6px; font-size: 13px; display: none; word-break: break-word; }
         .status-success { background: #064e3b; color: #a7f3d0; border: 1px solid #059669; }
-        .status-error { background: #7f1d1d; color: #fecaca; border: 1px solid #dc2626; word-break: break-all; }
+        .status-error { background: #7f1d1d; color: #fecaca; border: 1px solid #dc2626; }
         .historico-list { margin-top: 25px; border-top: 1px solid #1f2937; padding-top: 15px; }
         .historico-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #1f2937; font-size: 13px; }
       </style>
@@ -179,12 +194,19 @@ app.get('/', (req, res) => {
         let urlAtual = '';
 
         async function registrarEAuditar() {
-          const url = document.getElementById('urlProduto').value.trim();
-          const preco = document.getElementById('precoProduto').value.trim();
+          const urlInput = document.getElementById('urlProduto');
+          const precoInput = document.getElementById('precoProduto');
+          let url = urlInput.value.trim();
+          const preco = precoInput.value.trim();
 
           if (!url || !preco) {
             exibirStatus('Preencha o link e o preço antes de enviar.', 'error');
             return;
+          }
+
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+            urlInput.value = url;
           }
 
           urlAtual = url;
@@ -200,7 +222,7 @@ app.get('/', (req, res) => {
 
             if (data.success) {
               exibirStatus('Preço registrado com sucesso no banco de dados!', 'success');
-              document.getElementById('precoProduto').value = '';
+              precoInput.value = '';
               carregarHistorico(url);
             } else {
               exibirStatus(data.error || 'Erro ao registrar o preço.', 'error');
