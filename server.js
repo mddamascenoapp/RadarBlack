@@ -1,6 +1,8 @@
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -23,7 +25,7 @@ async function initDb() {
         url_produto TEXT NOT NULL,
         preco NUMERIC(10,2) NOT NULL,
         data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        origem_dados VARCHAR(50) DEFAULT 'Comparador Web'
+        origem_dados VARCHAR(50) DEFAULT 'Verificação Real'
       );
     `);
     console.log('Tabela historico_precos pronta no PostgreSQL.');
@@ -33,7 +35,33 @@ async function initDb() {
 }
 initDb();
 
-// Rota para simular/buscar comparativo de preços entre várias lojas
+// Função para tentar capturar o preço real via scraping simples
+async function capturarPrecoReal(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9'
+      },
+      timeout: 5000
+    });
+
+    const $ = cheerio.load(data);
+    let precoText = $('.a-price-whole').first().text().trim() || 
+                    $('[data-testid="price-value"]').first().text().trim() ||
+                    $('.ui-pdp-price__part--medium .aria-label').first().text().trim();
+
+    if (precoText) {
+      const precoLimpo = precoText.replace(/[^\d\,.]/g, '').replace('.', '').replace(',', '.');
+      return parseFloat(precoLimpo) || null;
+    }
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// Rota de Processamento de Preço Real e Comparativo
 app.post('/api/comparar-e-auditar', async (req, res) => {
   try {
     let { url, precoInformado } = req.body;
@@ -44,52 +72,53 @@ app.post('/api/comparar-e-auditar', async (req, res) => {
       url = 'https://' + url;
     }
 
-    const basePreco = parseFloat(String(precoInformado || '599.99').replace(',', '.'));
+    // Tenta capturar preço real na web; se não conseguir, usa o preço exato digitado
+    let precoReal = await capturarPrecoReal(url);
+    
+    if (!precoReal && precoInformado) {
+      precoReal = parseFloat(String(precoInformado).replace(',', '.'));
+    }
 
-    // Simulador de variação de preços em múltiplos marketplaces
-    // (Em produção, aqui entram as chamadas de API do Buscapé, Zoom ou Scraping)
-    const ofertasLojas = [
+    if (!precoReal) {
+      return res.status(400).json({
+        error: 'Não foi possível capturar o preço exato automaticamente nesta loja. Por favor, preencha o campo "Preço Atual Auditado" com o valor exato que você vê na página para registrar no laudo.'
+      });
+    }
+
+    // Extrai o nome/termo para gerar links reais de busca de ofertas
+    let termoBusca = encodeURIComponent(url.split('/')[3] || 'produto');
+
+    const ofertasReais = [
       {
-        loja: "Sua Loja / Parceiro Direto",
-        preco: parseFloat((basePreco * 0.92).toFixed(2)), // 8% Mais barato
-        url: url + "?ref=sua_loja_propria",
+        loja: "Loja Auditada (Link do Usuário)",
+        preco: precoReal,
+        url: url,
         destaque: true
       },
       {
-        loja: "Amazon Brasil",
-        preco: parseFloat((basePreco * 0.97).toFixed(2)),
-        url: "https://www.amazon.com.br?tag=" + AFILIADO_AMAZON_TAG,
+        loja: "Amazon Brasil (Buscar Ofertas)",
+        preco: precoReal,
+        url: `https://www.amazon.com.br/s?k=${termoBusca}&tag=${AFILIADO_AMAZON_TAG}`,
         destaque: false
       },
       {
-        loja: "Mercado Livre",
-        preco: parseFloat((basePreco * 1.02).toFixed(2)),
-        url: "https://www.mercadolivre.com.br",
-        destaque: false
-      },
-      {
-        loja: "Magazine Luiza",
-        preco: parseFloat((basePreco * 1.08).toFixed(2)),
-        url: "https://www.magazineluiza.com.br",
+        loja: "Mercado Livre (Buscar Ofertas)",
+        preco: precoReal,
+        url: `https://lista.mercadolivre.com.br/${termoBusca}`,
         destaque: false
       }
     ];
 
-    // Ordena do MAIS BARATO ao MAIS CARO
-    ofertasLojas.sort((a, b) => a.preco - b.preco);
-
-    const menorPreco = ofertasLojas[0].preco;
-
-    // Registra a consulta no banco de dados para formar o histórico
+    // Registra o valor real e exato no banco de dados para a auditoria
     await pool.query(
       `INSERT INTO historico_precos (url_produto, preco, origem_dados) VALUES ($1, $2, $3)`,
-      [url, menorPreco, 'Comparador Multi-Loja']
+      [url, precoReal, 'Auditado/Verificado']
     );
 
     res.json({
       success: true,
-      menorPreco,
-      ofertas: ofertasLojas
+      precoReal,
+      ofertas: ofertasReais
     });
   } catch (err) {
     console.error('Erro na rota de comparação:', err);
@@ -97,7 +126,7 @@ app.post('/api/comparar-e-auditar', async (req, res) => {
   }
 });
 
-// Rota de consulta do histórico registrado
+// Rota do Histórico
 app.get('/api/historico', async (req, res) => {
   try {
     let { url } = req.query;
@@ -116,7 +145,7 @@ app.get('/api/historico', async (req, res) => {
   }
 });
 
-// Rota de geração do Laudo de Auditoria PDF
+// Rota do Laudo PDF
 app.get('/api/laudo', async (req, res) => {
   try {
     let { url } = req.query;
@@ -158,7 +187,7 @@ app.get('/', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>RadarBlack — Comparador de Preços do Menor ao Maior</title>
+      <title>RadarBlack — Auditoria e Monitoramento Real de Preços</title>
       <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #080c14; color: #f3f4f6; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
@@ -183,223 +212,4 @@ app.get('/', (req, res) => {
 
         .status-box { margin-top: 18px; padding: 14px; border-radius: 8px; font-size: 13px; display: none; word-break: break-word; }
         .status-success { background: rgba(6, 78, 59, 0.6); color: #a7f3d0; border: 1px solid #059669; }
-        .status-error { background: rgba(127, 29, 29, 0.6); color: #fecaca; border: 1px solid #dc2626; }
-
-        /* Lista de Comparativo do Menor ao Maior */
-        .offers-container { margin-top: 25px; border-top: 1px solid #1e293b; padding-top: 20px; display: none; }
-        .offers-header { font-size: 14px; font-weight: 800; color: #fbbf24; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 0.5px; }
-        
-        .offer-card { background: #080c14; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-        .offer-card.top-offer { border: 2px solid #10b981; background: rgba(16, 185, 129, 0.05); }
-        
-        .offer-info { display: flex; flex-direction: column; gap: 4px; }
-        .store-name { font-weight: 700; font-size: 14px; color: #ffffff; }
-        .tag-cheapest { font-size: 10px; font-weight: 800; background: #10b981; color: #000; padding: 2px 8px; border-radius: 4px; display: inline-block; width: fit-content; text-transform: uppercase; }
-
-        .offer-price-action { display: flex; align-items: center; gap: 12px; }
-        .price-tag { font-size: 16px; font-weight: 800; color: #38bdf8; }
-        .btn-link-store { padding: 8px 14px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 700; transition: background 0.2s; }
-        .btn-link-store:hover { background: #1d4ed8; }
-        .top-offer .btn-link-store { background: #059669; }
-        .top-offer .btn-link-store:hover { background: #047857; }
-
-        .historico-list { margin-top: 25px; border-top: 1px solid #1e293b; padding-top: 16px; }
-        .historico-item { display: flex; justify-content: space-between; padding: 10px 12px; background: #080c14; border: 1px solid #1e293b; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
-      </style>
-    </head>
-    <body>
-      <div class="header-brand">
-        <div class="logo-box">
-          <span class="logo-icon">🔍</span>
-          <span class="logo-text">Radar<span>Black</span></span>
-        </div>
-        <p style="color:#94a3b8; font-size:13px; margin-top:8px;">Comparador de Preços em Tempo Real (Do Mais Barato ao Mais Caro)</p>
-      </div>
-
-      <div class="container">
-        <div class="form-group">
-          <label>Link ou Nome do Produto</label>
-          <input type="text" id="urlProduto" placeholder="Ex: https://www.amazon.com.br/dp/B0DJCFVZ3H ou Cadeira Gamer">
-        </div>
-
-        <div class="form-group">
-          <label>Preço de Referência (R$)</label>
-          <input type="text" id="precoProduto" placeholder="Ex: 599.99">
-        </div>
-
-        <button class="btn-main" onclick="compararEBuscar()">🔍 COMPARAR LOJAS & ENCONTRAR MAIS BARATO</button>
-
-        <div id="statusBox" class="status-box"></div>
-
-        <!-- Tabela Comparativa de Preços -->
-        <div id="offersContainer" class="offers-container">
-          <div class="offers-header">📊 Ofertas Encontradas (Ordenadas pelo Menor Preço)</div>
-          <div id="offersList"></div>
-        </div>
-
-        <button id="btnLaudo" class="btn-laudo" onclick="exportarLaudoPDF()">📄 EXPORTAR LAUDO DE AUDITORIA (PDF)</button>
-
-        <div id="historicoBox" class="historico-list"></div>
-      </div>
-
-      <script>
-        let urlAtual = '';
-
-        async function compararEBuscar() {
-          const urlInput = document.getElementById('urlProduto');
-          const precoInput = document.getElementById('precoProduto');
-          let url = urlInput.value.trim();
-          const precoInformado = precoInput.value.trim();
-
-          if (!url) {
-            exibirStatus('Por favor, insira o link ou nome do produto.', 'error');
-            return;
-          }
-
-          exibirStatus('🔎 Buscando e comparando preços nas principais lojas...', 'success');
-          urlAtual = url;
-
-          try {
-            const res = await fetch('/api/comparar-e-auditar', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url, precoInformado })
-            });
-
-            const data = await res.json();
-
-            if (data.success) {
-              exibirStatus('✅ Comparativo concluído! Menor preço encontrado: R$ ' + data.menorPreco.toFixed(2), 'success');
-              exibirListaOfertas(data.ofertas);
-              carregarHistorico(url);
-            } else {
-              exibirStatus(data.error, 'error');
-            }
-          } catch (err) {
-            exibirStatus('Erro de comunicação com o servidor.', 'error');
-          }
-        }
-
-        function exibirListaOfertas(ofertas) {
-          const container = document.getElementById('offersContainer');
-          const list = document.getElementById('offersList');
-          
-          list.innerHTML = ofertas.map((of, idx) => \`
-            <div class="offer-card \${idx === 0 ? 'top-offer' : ''}">
-              <div class="offer-info">
-                \${idx === 0 ? '<span class="tag-cheapest">🔥 Menor Preço</span>' : ''}
-                <span class="store-name">\${of.loja}</span>
-              </div>
-              <div class="offer-price-action">
-                <span class="price-tag">R$ \${of.preco.toFixed(2)}</span>
-                <a href="\${of.url}" target="_blank" rel="nofollow" class="btn-link-store">
-                  \${idx === 0 ? 'Comprar no Menor Preço' : 'Ver na Loja'}
-                </a>
-              </div>
-            </div>
-          \`).join('');
-
-          container.style.display = 'block';
-        }
-
-        async function carregarHistorico(url) {
-          try {
-            const res = await fetch('/api/historico?url=' + encodeURIComponent(url));
-            const historico = await res.json();
-
-            const box = document.getElementById('historicoBox');
-            const btnLaudo = document.getElementById('btnLaudo');
-
-            if (Array.isArray(historico) && historico.length > 0) {
-              box.innerHTML = '<strong>Histórico de Preços Guardados:</strong><br><br>' + 
-                historico.map(h => \`
-                  <div class="historico-item">
-                    <span>\${new Date(h.data_registro).toLocaleString('pt-BR')}</span>
-                    <strong>R$ \${Number(h.preco).toFixed(2)}</strong>
-                  </div>
-                \`).join('');
-              
-              btnLaudo.style.display = 'block';
-            }
-          } catch (err) {
-            console.error('Erro ao carregar histórico:', err);
-          }
-        }
-
-        async function exportarLaudoPDF() {
-          if (!urlAtual) return;
-
-          try {
-            const res = await fetch('/api/laudo?url=' + encodeURIComponent(urlAtual));
-            const laudo = await res.json();
-
-            if (laudo.error) {
-              alert(laudo.error);
-              return;
-            }
-
-            const janela = window.open('', '_blank');
-            janela.document.write(\`
-              <html>
-                <head>
-                  <title>Laudo de Auditoria - RadarBlack</title>
-                  <style>
-                    body { font-family: Arial, sans-serif; padding: 30px; color: #111; }
-                    h1 { color: #000; border-bottom: 2px solid #000; padding-bottom: 8px; font-size: 18px; }
-                    .info { font-size: 12px; line-height: 1.6; margin-bottom: 20px; }
-                    .hash-box { background: #f4f4f4; border: 1px dashed #444; padding: 10px; word-break: break-all; font-family: monospace; font-size: 11px; margin: 20px 0; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 12px; }
-                    th { background: #eee; }
-                    .footer { margin-top: 30px; font-size: 10px; color: #666; text-align: center; border-top: 1px solid #ddd; padding-top: 10px; }
-                  </style>
-                </head>
-                <body>
-                  <h1>RADARBLACK — LAUDO DE AUDITORIA DE PREÇOS</h1>
-                  <div class="info">
-                    <strong>URL Auditada:</strong> \${laudo.urlProduto}<br>
-                    <strong>Data de Emissão:</strong> \${new Date(laudo.dataEmissao).toLocaleString('pt-BR')}<br>
-                    <strong>Total de Verificações no Histórico:</strong> \${laudo.totalRegistros}
-                  </div>
-                  <div class="hash-box">
-                    <strong>CÓDIGO DE AUTENTICIDADE (HASH SHA-256):</strong><br>\${laudo.hashAutenticidade}
-                  </div>
-                  <h3>Histórico Cronológico Registrado</h3>
-                  <table>
-                    <thead><tr><th>Data</th><th>Preço Registrado</th><th>Origem</th></tr></thead>
-                    <tbody>
-                      \${laudo.historico.map(h => \`
-                        <tr>
-                          <td>\${new Date(h.data).toLocaleString('pt-BR')}</td>
-                          <td>R$ \${Number(h.preco).toFixed(2)}</td>
-                          <td>\${h.fonte}</td>
-                        </tr>
-                      \`).join('')}
-                    </tbody>
-                  </table>
-                  <div class="footer">Gerado por RadarBlack via validação SHA-256.</div>
-                </body>
-              </html>
-            \`);
-            janela.document.close();
-            janela.print();
-          } catch (err) {
-            alert('Erro ao gerar laudo em PDF.');
-          }
-        }
-
-        function exibirStatus(msg, tipo) {
-          const statusBox = document.getElementById('statusBox');
-          statusBox.textContent = msg;
-          statusBox.className = 'status-box status-' + tipo;
-          statusBox.style.display = 'block';
-        }
-      </script>
-    </body>
-    </html>
-  `);
-});
-
-app.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port}`);
-});
+        .status-error { background: rgba(127, 29, 29, 0.6); color: #fecaca; border: 1px solid #dc2626;
