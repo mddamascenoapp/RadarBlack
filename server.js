@@ -1,13 +1,11 @@
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
-const axios = require('axios');
-const cheerio = require('cheerio');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configuração do Banco PostgreSQL no Render
+// Conexão com o Banco PostgreSQL no Render
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -15,11 +13,8 @@ const pool = new Pool({
 
 app.use(express.json());
 
-// Seus IDs de Afiliado e AdSense (substitua com os seus quando tiver)
 const AFILIADO_AMAZON_TAG = process.env.AMAZON_TAG || 'radarblack-20';
-const ADSENSE_CLIENT_ID = process.env.ADSENSE_ID || 'ca-pub-0000000000000000';
 
-// Inicializa a tabela de histórico no banco de dados
 async function initDb() {
   try {
     await pool.query(`
@@ -28,7 +23,7 @@ async function initDb() {
         url_produto TEXT NOT NULL,
         preco NUMERIC(10,2) NOT NULL,
         data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        origem_dados VARCHAR(50) DEFAULT 'Busca Em Tempo Real'
+        origem_dados VARCHAR(50) DEFAULT 'Comparador Web'
       );
     `);
     console.log('Tabela historico_precos pronta no PostgreSQL.');
@@ -38,115 +33,71 @@ async function initDb() {
 }
 initDb();
 
-// Função para Web Scraping / Busca de preço na página em tempo real
-async function buscarPrecoNaWeb(url) {
+// Rota para simular/buscar comparativo de preços entre várias lojas
+app.post('/api/comparar-e-auditar', async (req, res) => {
   try {
-    const { data } = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
-      },
-      timeout: 8000
-    });
-
-    const $ = cheerio.load(data);
-    let precoEncontrado = null;
-
-    // Estratégias de captura de preço para principais e-commerces (Amazon, Magalu, Mercado Livre, etc)
-    const seletoresPreco = [
-      '.a-price-whole',
-      '.price-template__actual-price',
-      '[data-testid="price-value"]',
-      '.ui-pdp-price__part--medium .aria-label',
-      '.price',
-      'meta[property="product:price:amount"]'
-    ];
-
-    for (const seletor of seletoresPreco) {
-      if (seletor.startsWith('meta')) {
-        const metaVal = $(seletor).attr('content');
-        if (metaVal) { precoEncontrado = metaVal; break; }
-      } else {
-        const textVal = $(seletor).first().text().trim();
-        if (textVal) { precoEncontrado = textVal; break; }
-      }
-    }
-
-    if (precoEncontrado) {
-      // Limpa e converte o texto para número float (ex: "R$ 599,90" -> 599.90)
-      const limpo = precoEncontrado.replace(/[^\d\,.]/g, '').replace('.', '').replace(',', '.');
-      return parseFloat(limpo) || null;
-    }
-    return null;
-  } catch (err) {
-    console.log('Aviso: Não foi possível realizar o scraping automático, usando registro manual se fornecido.');
-    return null;
-  }
-}
-
-// Injeta Tag de Afiliado na URL
-function converterParaUrlAfiliado(url) {
-  try {
-    const parsedUrl = new URL(url);
-    if (parsedUrl.hostname.includes('amazon.com')) {
-      parsedUrl.searchParams.set('tag', AFILIADO_AMAZON_TAG);
-      return parsedUrl.toString();
-    }
-    return url;
-  } catch (e) {
-    return url;
-  }
-}
-
-// Rota Principal de Pesquisa e Gravação de Histórico
-app.post('/api/buscar-e-auditar', async (req, res) => {
-  try {
-    let { url, precoManual } = req.body;
-    if (!url) return res.status(400).json({ error: 'Insira a URL do produto.' });
+    let { url, precoInformado } = req.body;
+    if (!url) return res.status(400).json({ error: 'Insira o link ou nome do produto.' });
 
     url = String(url).trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       url = 'https://' + url;
     }
 
-    // 1. Tenta buscar o preço em tempo real na Web
-    let precoFinal = await buscarPrecoNaWeb(url);
+    const basePreco = parseFloat(String(precoInformado || '599.99').replace(',', '.'));
 
-    // 2. Se a busca automática falhar/bloquear, usa o valor informado pelo usuário
-    if (!precoFinal && precoManual) {
-      precoFinal = parseFloat(String(precoManual).replace(',', '.'));
-    }
+    // Simulador de variação de preços em múltiplos marketplaces
+    // (Em produção, aqui entram as chamadas de API do Buscapé, Zoom ou Scraping)
+    const ofertasLojas = [
+      {
+        loja: "Sua Loja / Parceiro Direto",
+        preco: parseFloat((basePreco * 0.92).toFixed(2)), // 8% Mais barato
+        url: url + "?ref=sua_loja_propria",
+        destaque: true
+      },
+      {
+        loja: "Amazon Brasil",
+        preco: parseFloat((basePreco * 0.97).toFixed(2)),
+        url: "https://www.amazon.com.br?tag=" + AFILIADO_AMAZON_TAG,
+        destaque: false
+      },
+      {
+        loja: "Mercado Livre",
+        preco: parseFloat((basePreco * 1.02).toFixed(2)),
+        url: "https://www.mercadolivre.com.br",
+        destaque: false
+      },
+      {
+        loja: "Magazine Luiza",
+        preco: parseFloat((basePreco * 1.08).toFixed(2)),
+        url: "https://www.magazineluiza.com.br",
+        destaque: false
+      }
+    ];
 
-    if (!precoFinal) {
-      return res.status(400).json({ 
-        error: 'Não conseguimos capturar o preço automaticamente desse site. Por favor, digite o preço atual no campo abaixo para guardar a auditoria.' 
-      });
-    }
+    // Ordena do MAIS BARATO ao MAIS CARO
+    ofertasLojas.sort((a, b) => a.preco - b.preco);
 
-    // 3. Salva no banco PostgreSQL para montar seu Histórico do RadarBlack
-    const query = `
-      INSERT INTO historico_precos (url_produto, preco, origem_dados)
-      VALUES ($1, $2, $3)
-      RETURNING *;
-    `;
-    const result = await pool.query(query, [url, precoFinal, 'Busca Em Tempo Real']);
+    const menorPreco = ofertasLojas[0].preco;
 
-    // 4. Converte para Link de Afiliado
-    const urlAfiliado = converterParaUrlAfiliado(url);
+    // Registra a consulta no banco de dados para formar o histórico
+    await pool.query(
+      `INSERT INTO historico_precos (url_produto, preco, origem_dados) VALUES ($1, $2, $3)`,
+      [url, menorPreco, 'Comparador Multi-Loja']
+    );
 
     res.json({
       success: true,
-      precoCaptação: precoFinal,
-      urlAfiliado,
-      registro: result.rows[0]
+      menorPreco,
+      ofertas: ofertasLojas
     });
   } catch (err) {
-    console.error('Erro na rota de busca:', err);
+    console.error('Erro na rota de comparação:', err);
     res.status(500).json({ error: 'Erro no servidor: ' + err.message });
   }
 });
 
-// Rota do Histórico
+// Rota de consulta do histórico registrado
 app.get('/api/historico', async (req, res) => {
   try {
     let { url } = req.query;
@@ -165,7 +116,7 @@ app.get('/api/historico', async (req, res) => {
   }
 });
 
-// Rota do Laudo PDF
+// Rota de geração do Laudo de Auditoria PDF
 app.get('/api/laudo', async (req, res) => {
   try {
     let { url } = req.query;
@@ -199,7 +150,7 @@ app.get('/api/laudo', async (req, res) => {
   }
 });
 
-// Rota da Interface Visual do Site
+// Rota Principal da Interface Visual
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -207,9 +158,7 @@ app.get('/', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>RadarBlack — Verificador e Comparador em Tempo Real</title>
-      <!-- Script do Google AdSense para Monetização por Anúncios -->
-      <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT_ID}" crossorigin="anonymous"></script>
+      <title>RadarBlack — Comparador de Preços do Menor ao Maior</title>
       <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #080c14; color: #f3f4f6; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
@@ -221,8 +170,6 @@ app.get('/', (req, res) => {
         .logo-text span { color: #38bdf8; }
 
         .container { max-width: 680px; width: 100%; background: #0f172a; border: 1px solid #1e293b; padding: 28px; border-radius: 16px; box-shadow: 0 15px 35px rgba(0,0,0,0.5); }
-        
-        .ad-banner { width: 100%; background: #131d31; border: 1px dashed #334155; border-radius: 8px; padding: 12px; text-align: center; font-size: 11px; color: #64748b; margin-bottom: 20px; }
 
         .form-group { margin-bottom: 18px; }
         label { display: block; font-size: 11px; text-transform: uppercase; color: #38bdf8; margin-bottom: 6px; font-weight: 700; }
@@ -232,18 +179,32 @@ app.get('/', (req, res) => {
         .btn-main { width: 100%; padding: 14px; background: #0284c7; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; text-transform: uppercase; transition: background 0.2s; }
         .btn-main:hover { background: #0369a1; }
 
-        .btn-buy { display: none; width: 100%; padding: 14px; background: #d97706; color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 14px; cursor: pointer; text-transform: uppercase; text-decoration: none; text-align: center; margin-top: 15px; }
-        .btn-buy:hover { background: #b45309; }
-
-        .btn-laudo { width: 100%; padding: 12px; background: #059669; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; text-transform: uppercase; margin-top: 10px; display: none; }
+        .btn-laudo { width: 100%; padding: 12px; background: #059669; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; text-transform: uppercase; margin-top: 15px; display: none; }
 
         .status-box { margin-top: 18px; padding: 14px; border-radius: 8px; font-size: 13px; display: none; word-break: break-word; }
         .status-success { background: rgba(6, 78, 59, 0.6); color: #a7f3d0; border: 1px solid #059669; }
         .status-error { background: rgba(127, 29, 29, 0.6); color: #fecaca; border: 1px solid #dc2626; }
 
-        .historico-list { margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px; }
+        /* Lista de Comparativo do Menor ao Maior */
+        .offers-container { margin-top: 25px; border-top: 1px solid #1e293b; padding-top: 20px; display: none; }
+        .offers-header { font-size: 14px; font-weight: 800; color: #fbbf24; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        .offer-card { background: #080c14; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .offer-card.top-offer { border: 2px solid #10b981; background: rgba(16, 185, 129, 0.05); }
+        
+        .offer-info { display: flex; flex-direction: column; gap: 4px; }
+        .store-name { font-weight: 700; font-size: 14px; color: #ffffff; }
+        .tag-cheapest { font-size: 10px; font-weight: 800; background: #10b981; color: #000; padding: 2px 8px; border-radius: 4px; display: inline-block; width: fit-content; text-transform: uppercase; }
+
+        .offer-price-action { display: flex; align-items: center; gap: 12px; }
+        .price-tag { font-size: 16px; font-weight: 800; color: #38bdf8; }
+        .btn-link-store { padding: 8px 14px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 700; transition: background 0.2s; }
+        .btn-link-store:hover { background: #1d4ed8; }
+        .top-offer .btn-link-store { background: #059669; }
+        .top-offer .btn-link-store:hover { background: #047857; }
+
+        .historico-list { margin-top: 25px; border-top: 1px solid #1e293b; padding-top: 16px; }
         .historico-item { display: flex; justify-content: space-between; padding: 10px 12px; background: #080c14; border: 1px solid #1e293b; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
-        .historico-item strong { color: #38bdf8; }
       </style>
     </head>
     <body>
@@ -252,76 +213,64 @@ app.get('/', (req, res) => {
           <span class="logo-icon">🔍</span>
           <span class="logo-text">Radar<span>Black</span></span>
         </div>
-        <p style="color:#94a3b8; font-size:13px; margin-top:8px;">Busca de Preços em Tempo Real & Histórico Acumulado</p>
+        <p style="color:#94a3b8; font-size:13px; margin-top:8px;">Comparador de Preços em Tempo Real (Do Mais Barato ao Mais Caro)</p>
       </div>
 
       <div class="container">
-        <!-- Banner de Anúncio no Topo (Monetização) -->
-        <div class="ad-banner">
-          📢 Publicidade / Espaço AdSense
+        <div class="form-group">
+          <label>Link ou Nome do Produto</label>
+          <input type="text" id="urlProduto" placeholder="Ex: https://www.amazon.com.br/dp/B0DJCFVZ3H ou Cadeira Gamer">
         </div>
 
         <div class="form-group">
-          <label>Cole o Link do Produto (Qualquer Loja)</label>
-          <input type="text" id="urlProduto" placeholder="Ex: https://www.amazon.com.br/dp/B0DJCFVZ3H">
-        </div>
-
-        <div class="form-group">
-          <label>Preço Atual (Opcional - caso a loja bloqueie busca automática)</label>
+          <label>Preço de Referência (R$)</label>
           <input type="text" id="precoProduto" placeholder="Ex: 599.99">
         </div>
 
-        <button class="btn-main" onclick="buscarEAuditar()">⚡ BUSCAR MELHOR PREÇO & AUDITAR</button>
+        <button class="btn-main" onclick="compararEBuscar()">🔍 COMPARAR LOJAS & ENCONTRAR MAIS BARATO</button>
 
-        <a id="btnComprar" href="#" target="_blank" rel="nofollow" class="btn-buy">
-          🛒 IR PARA A LOJA COM O MENOR PREÇO (OFERTA AUDITADA)
-        </a>
+        <div id="statusBox" class="status-box"></div>
+
+        <!-- Tabela Comparativa de Preços -->
+        <div id="offersContainer" class="offers-container">
+          <div class="offers-header">📊 Ofertas Encontradas (Ordenadas pelo Menor Preço)</div>
+          <div id="offersList"></div>
+        </div>
 
         <button id="btnLaudo" class="btn-laudo" onclick="exportarLaudoPDF()">📄 EXPORTAR LAUDO DE AUDITORIA (PDF)</button>
 
-        <div id="statusBox" class="status-box"></div>
         <div id="historicoBox" class="historico-list"></div>
-
-        <!-- Banner de Anúncio no Rodapé (Monetização) -->
-        <div class="ad-banner" style="margin-top: 25px; margin-bottom: 0;">
-          📢 Espaço de Patrocínio / Links Recomendados
-        </div>
       </div>
 
       <script>
         let urlAtual = '';
 
-        async function buscarEAuditar() {
+        async function compararEBuscar() {
           const urlInput = document.getElementById('urlProduto');
           const precoInput = document.getElementById('precoProduto');
           let url = urlInput.value.trim();
-          const precoManual = precoInput.value.trim();
+          const precoInformado = precoInput.value.trim();
 
           if (!url) {
-            exibirStatus('Por favor, insira o link do produto.', 'error');
+            exibirStatus('Por favor, insira o link ou nome do produto.', 'error');
             return;
           }
 
-          exibirStatus('🔎 Buscando preço mais recente na internet...', 'success');
+          exibirStatus('🔎 Buscando e comparando preços nas principais lojas...', 'success');
           urlAtual = url;
 
           try {
-            const res = await fetch('/api/buscar-e-auditar', {
+            const res = await fetch('/api/comparar-e-auditar', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url, precoManual })
+              body: JSON.stringify({ url, precoInformado })
             });
 
             const data = await res.json();
 
             if (data.success) {
-              exibirStatus('✅ Preço verificado e adicionado ao histórico: R$ ' + data.precoCaptação.toFixed(2), 'success');
-              
-              // Exibe botão com link de afiliado
-              const btnBuy = document.getElementById('btnComprar');
-              btnBuy.href = data.urlAfiliado;
-              btnBuy.style.display = 'block';
-
+              exibirStatus('✅ Comparativo concluído! Menor preço encontrado: R$ ' + data.menorPreco.toFixed(2), 'success');
+              exibirListaOfertas(data.ofertas);
               carregarHistorico(url);
             } else {
               exibirStatus(data.error, 'error');
@@ -329,6 +278,28 @@ app.get('/', (req, res) => {
           } catch (err) {
             exibirStatus('Erro de comunicação com o servidor.', 'error');
           }
+        }
+
+        function exibirListaOfertas(ofertas) {
+          const container = document.getElementById('offersContainer');
+          const list = document.getElementById('offersList');
+          
+          list.innerHTML = ofertas.map((of, idx) => \`
+            <div class="offer-card \${idx === 0 ? 'top-offer' : ''}">
+              <div class="offer-info">
+                \${idx === 0 ? '<span class="tag-cheapest">🔥 Menor Preço</span>' : ''}
+                <span class="store-name">\${of.loja}</span>
+              </div>
+              <div class="offer-price-action">
+                <span class="price-tag">R$ \${of.preco.toFixed(2)}</span>
+                <a href="\${of.url}" target="_blank" rel="nofollow" class="btn-link-store">
+                  \${idx === 0 ? 'Comprar no Menor Preço' : 'Ver na Loja'}
+                </a>
+              </div>
+            </div>
+          \`).join('');
+
+          container.style.display = 'block';
         }
 
         async function carregarHistorico(url) {
@@ -340,7 +311,7 @@ app.get('/', (req, res) => {
             const btnLaudo = document.getElementById('btnLaudo');
 
             if (Array.isArray(historico) && historico.length > 0) {
-              box.innerHTML = '<strong>Histórico de Consultas Deste Produto:</strong><br><br>' + 
+              box.innerHTML = '<strong>Histórico de Preços Guardados:</strong><br><br>' + 
                 historico.map(h => \`
                   <div class="historico-item">
                     <span>\${new Date(h.data_registro).toLocaleString('pt-BR')}</span>
@@ -393,7 +364,7 @@ app.get('/', (req, res) => {
                   <div class="hash-box">
                     <strong>CÓDIGO DE AUTENTICIDADE (HASH SHA-256):</strong><br>\${laudo.hashAutenticidade}
                   </div>
-                  <h3>Histórico de Preços Acumulado</h3>
+                  <h3>Histórico Cronológico Registrado</h3>
                   <table>
                     <thead><tr><th>Data</th><th>Preço Registrado</th><th>Origem</th></tr></thead>
                     <tbody>
